@@ -32,7 +32,7 @@ def resnet_arg_scope(is_training=True, batch_norm_decay=0.997, batch_norm_epsilo
             return arg_sc
 
 
-class SPGCN():
+class SIGAN():
     def __init__(self,
                  num_sgnodes=2+17,
                  num_agnodes=6+17,

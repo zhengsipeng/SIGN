@@ -240,14 +240,12 @@ class SolverWrapper(object):
                                                   self.Neg_select, Data_length, clsid2cls, objs_bert, self.posetype)
 
             blobs['head'] = np.load('Temp/train/' + str(blobs['image_id']) + '.npy')
-            #print(blobs['body_part'].shape)
             if not blobs['pose_none_flag']:
                 iter += 1
                 continue
 
             total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
             timer.toc()
-            #print(prediction)
             if iter % cfg.TRAIN.DISPLAY == 0:
                 print('iter: %d / %d, im_id: %u, total loss: %.6f, lr: %f, speed: %.3f s/ iter' %
                       (iter, max_iters, self.Trainval_GT[iter % Data_length][0][0], total_loss, lr.eval(),
