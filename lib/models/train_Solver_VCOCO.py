@@ -3,18 +3,12 @@ from __future__ import division
 from __future__ import print_function
 
 from ult.config import cfg
-from ult.ult import Get_Next_Instance_HO_spNeg_v2
 from ult.timer import Timer
+from ult.ult import Get_Next_Instance_VCOCO
 
 import os
-import pickle as pkl
 import tensorflow as tf
 import numpy as np
-
-classes = []
-clsid2cls = dict()
-for i in range(len(classes)):
-    clsid2cls[i+1] = classes[i]
 
 
 class SolverWrapper(object):
@@ -22,25 +16,22 @@ class SolverWrapper(object):
     A wrapper class for the interactive training process
     """
 
-    def __init__(self, sess, network, Trainval_GT, Trainval_N, output_dir, tbdir,
-                 Pos_augment, Neg_select, Restore_flag, pretrained_model, posetype):
+    def __init__(self, network, Trainval_GT, Trainval_N, output_dir,
+                 Pos_augment, Neg_select, Restore_flag, pretrained_model, use_pm):
         self.net = network
         self.interval_divide = 5
         self.Trainval_GT = self.changeForm(Trainval_GT, self.interval_divide)
         self.Trainval_N = Trainval_N
         self.output_dir = output_dir
-        self.tbdir = tbdir
         self.Pos_augment = Pos_augment
         self.Neg_select = Neg_select
         self.Restore_flag = Restore_flag
         self.pretrained_model = pretrained_model
-        self.posetype = posetype
+        self.use_pm = use_pm
 
     def snapshot(self, sess, iter):
-
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-
         # Store the model snapshot
         filename = 'HOI' + '_iter_{:d}'.format(iter) + '.ckpt'
         filename = os.path.join(self.output_dir, filename)
@@ -59,10 +50,9 @@ class SolverWrapper(object):
             count = 0
             length = len(value)
             while count < length:
-                temp = value[count: min(count+interval_divide, length)]
+                temp = value[count: min(count + interval_divide, length)]
                 count += len(temp)
                 GT_new.append(temp)
-
         return GT_new
 
     def construct_graph(self, sess):
@@ -86,7 +76,7 @@ class SolverWrapper(object):
             else:
                 raise NotImplementedError
 
-            #lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
+            # lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
             #                                staircase=True)
             lr = tf.train.piecewise_constant(global_step, boundaries=[24000, 48000], values=[0.04, 0.004, 0.00004])
 
@@ -99,8 +89,6 @@ class SolverWrapper(object):
             train_op = self.optimizer.apply_gradients(capped_gvs, global_step=global_step)
 
             self.saver = tf.train.Saver(max_to_keep=cfg.TRAIN.SNAPSHOT_KEPT)
-            # Write the train and validation information to tensorboard
-            self.writer = tf.summary.FileWriter(self.tbdir, sess.graph)
 
         return lr, train_op
 
@@ -163,8 +151,9 @@ class SolverWrapper(object):
                 for ele in tf.model_variables():
                     if 'block4' in ele.name:
                         saver_t[ele.name[:-2]] = \
-                        [var for var in tf.model_variables() if ele.name[:-2].replace('block4', 'block5') in var.name][
-                            0]
+                            [var for var in tf.model_variables() if
+                             ele.name[:-2].replace('block4', 'block5') in var.name][
+                                0]
 
                 self.saver_restore = tf.train.Saver(saver_t)
                 self.saver_restore.restore(sess, self.pretrained_model)
@@ -175,8 +164,9 @@ class SolverWrapper(object):
                 for ele in tf.model_variables():
                     if 'block4' in ele.name:
                         saver_t[ele.name[:-2]] = \
-                        [var for var in tf.model_variables() if ele.name[:-2].replace('block4', 'block6') in var.name][
-                            0]
+                            [var for var in tf.model_variables() if
+                             ele.name[:-2].replace('block4', 'block6') in var.name][
+                                0]
 
                 self.saver_restore = tf.train.Saver(saver_t)
                 self.saver_restore.restore(sess, self.pretrained_model)
@@ -188,8 +178,9 @@ class SolverWrapper(object):
                 for ele in tf.model_variables():
                     if 'block4' in ele.name:
                         saver_t[ele.name[:-2]] = \
-                        [var for var in tf.model_variables() if ele.name[:-2].replace('block4', 'block7') in var.name][
-                            0]
+                            [var for var in tf.model_variables() if
+                             ele.name[:-2].replace('block4', 'block7') in var.name][
+                                0]
 
                 self.saver_restore = tf.train.Saver(saver_t)
                 self.saver_restore.restore(sess, self.pretrained_model)
@@ -227,8 +218,8 @@ class SolverWrapper(object):
         print('Data_length', Data_length)
         while iter < max_iters + 1:
             timer.tic()
-            blobs = Get_Next_Instance_HO_spNeg_v2(self.Trainval_GT, self.Trainval_N, iter, self.Pos_augment,
-                                                     self.Neg_select, Data_length, self.posetype)
+            blobs = Get_Next_Instance_VCOCO(self.Trainval_GT, self.Trainval_N, iter, self.Pos_augment,
+                                                  self.Neg_select, Data_length, self.use_pm)
 
             if not blobs['pose_none_flag']:
                 iter += 1
@@ -236,47 +227,34 @@ class SolverWrapper(object):
             blobs['head'] = np.load('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy')
             loss_cls_H, loss_cls_HO, loss_cls_bi, total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
 
-            #print('Miss', str(blobs['image_id']))
-            #np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
+            # print('Miss', str(blobs['image_id']))
+            # np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
 
             timer.toc()
-            # print(prediction)
             if iter % cfg.TRAIN.DISPLAY == 0:
-                print('iter: %d / %d, im_id: %u, total loss: %.6f, '
-                      'loss_cls_H: %.6f, loss_cls_HO: %.6f, loss_cls_bi: %.6f'
-                      'lr: %f, speed: %.3f s/iter' % \
-                     (iter, max_iters, self.Trainval_GT[iter % Data_length][0][0],
-                      total_loss, loss_cls_H, loss_cls_HO, loss_cls_bi,
-                     lr.eval(), timer.average_time))
+                print('iter: %d / %d, im_id: %u, '
+                      'total loss: %.6f, loss_cls_H: %.6f, loss_cls_HO: %.6f, loss_cls_bi: %.6f'
+                      'lr: %f, speed: %.3f s/iter' %
+                      (iter, max_iters, self.Trainval_GT[iter % Data_length][0][0],
+                       total_loss, loss_cls_H, loss_cls_HO, loss_cls_bi,
+                       lr.eval(), timer.average_time))
 
-            # Snapshotting
             if (iter % cfg.TRAIN.SNAPSHOT_ITERS * 2 == 0 and iter != 0) or (iter == 10):
                 if iter != init_iter:
                     self.snapshot(sess, iter)
-
             iter += 1
-        self.writer.close()
 
 
-def train_net(network, Trainval_GT, Trainval_N, output_dir, tb_dir, Pos_augment, Neg_select, Restore_flag, posetype,
-              pretrained_model, max_iters=300000):
+def train_net(network, Trainval_GT, Trainval_N, output_dir, pretrained_model, Pos_augment, Neg_select,
+              Restore_flag, use_pm, max_iters=300000):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    if not os.path.exists(tb_dir):
-        os.makedirs(tb_dir)
-    if cfg.TRAIN_MODULE_CONTINUE == 2:  # train from beginning
-        # Remove previous events
-        filelist = [f for f in os.listdir(tb_dir)]
-        for f in filelist:
-            os.remove(os.path.join(tb_dir, f))
-
     tfconfig = tf.ConfigProto(allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
 
     with tf.Session(config=tfconfig) as sess:
-        sw = SolverWrapper(sess, network, Trainval_GT, Trainval_N, output_dir, tb_dir, Pos_augment, Neg_select,
-                           Restore_flag, pretrained_model, posetype)
+        sw = SolverWrapper(network, Trainval_GT, Trainval_N, output_dir, Pos_augment, Neg_select,
+                           Restore_flag, pretrained_model, use_pm)
         print('Solving..., Pos augment = ' + str(Pos_augment) + ', Neg augment = ' + str(Neg_select))
         sw.train_model(sess, max_iters)
         print('done solving')
-

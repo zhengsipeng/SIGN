@@ -8,7 +8,7 @@ import argparse
 import pickle
 from ult.config import cfg
 from models.train_Solver_VCOCO import train_net
-from networks.SPGCN_VCOCO_v2 import SPGCN
+from networks.SIGAN_VCOCO import SIGAN
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -17,10 +17,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train an iCAN on VCOCO')
     parser.add_argument('--num_iteration', dest='max_iters',
                         help='Number of iterations to perform',
-                        default=3000000, type=int)
+                        default=300000, type=int)
     parser.add_argument('--model', dest='model',
                         help='Select model',
-                        default='SPGCN_HICO', type=str)
+                        default='SIGAN_VCOCO', type=str)
     parser.add_argument('--Pos_augment', dest='Pos_augment',
                         help='Number of augmented detection for each one. (By jittering the object detections)',
                         default=15, type=int)
@@ -30,44 +30,33 @@ def parse_args():
     parser.add_argument('--Restore_flag', dest='Restore_flag',
                         help='How many ResNet blocks are there?',
                         default=5, type=int)
-    parser.add_argument('--num_fc', dest='num_fc',
-                        help='Number of FC2',
-                        default=1024, type=int)
-    parser.add_argument('--version', dest='version',
-                        help='latefusion type',
-                        default='v1', type=str)
-    parser.add_argument('--posemap', dest='posemap',
+
+    parser.add_argument('--skebox', dest='use_skebox',
+                        help='use_skebox or not',
+                        action='store_true', default=False)
+    parser.add_argument('--bp', dest='use_bodypart',
+                        help='use_bodypart or not',
+                        action='store_true', default=False)
+    parser.add_argument('--pm', dest='use_posemap',
                         help='use posemap or not',
                         action='store_true', default=False)
-    parser.add_argument('--semantic', dest='semantic',
-                        help='use semantic or not',
-                        action='store_true', default=False)
-    parser.add_argument('--posegraph', dest='posegraph',
+    parser.add_argument('--sg', dest='use_sg',
                         help='use posegraph or not',
                         action='store_true', default=False)
-    parser.add_argument('--posegraph_att', dest='posegraph_att',
+    parser.add_argument('--sg_att', dest='use_sg_att',
+                        help='use Spatial posegraph or not',
+                        action='store_true', default=False)
+    parser.add_argument('--ag', dest='use_ag',
+                        help='use Appearance posegraph or not',
+                        action='store_true', default=False)
+    parser.add_argument('--ag_att', dest='use_ag_att',
                         help='use posegraph or not',
                         action='store_true', default=False)
-    parser.add_argument('--bi_posegraph', dest='bi_posegraph',
-                        help='use bi_posegraph or not',
-                        action='store_true', default=False)
-    parser.add_argument('--binary', dest='binary',
+    parser.add_argument('--bi', dest='use_binary',
                         help='use binary or not',
                         action='store_true', default=False)
     parser.add_argument('--tmp', dest='tmp',
                         help='use tmp or not',
-                        action='store_true', default=False)
-    parser.add_argument('--bodypoint', dest='bodypoint',
-                        help='use bodypoint or not',
-                        action='store_true', default=False)
-    parser.add_argument('--bodypart', dest='bodypart',
-                        help='use bodypart or not',
-                        action='store_true', default=False)
-    parser.add_argument('--latefusion', dest='latefusion',
-                        help='use latefusion or not',
-                        action='store_true', default=False)
-    parser.add_argument('--H', dest='H',
-                        help='use H or not',
                         action='store_true', default=False)
     args = parser.parse_args()
     return args
@@ -92,29 +81,20 @@ if __name__ == '__main__':
     # output directory where the models are saved
     output_dir = cfg.ROOT_DIR + '/Weights/' + args.model + '/'
 
-    posetype = 2 if args.posemap else 1
-    if args.binary or args.version == 'v2':
-        posetype = 2
+    print('Use skebox: ' + str(args.use_skebox))
+    print('Use bodypart: ' + str(args.use_bodypart))
+    print('Use posemap: ' + str(args.use_pm))
+    print('Use S graph: ' + str(args.use_sg))
+    print('Use S graph att: ' + str(args.use_sg_att))
+    print('Use A graph: ' + str(args.use_ag))
+    print('Use A graph att: ' + str(args.use_ag_att))
+    print('Use binary: ' + str(args.binary))
 
-    print('Posetype: ' + str(posetype))
-    print('Bodypoint: ' + str(args.bodypoint))
-    print('Bodypart: ' + str(args.bodypart))
-    print('Posemap: ' + str(args.posemap))
-    print('Posegraph: ' + str(args.posegraph))
-    print('Posegraph_att: ' + str(args.posegraph_att))
-    print('Bi-posegraph: ' + str(args.bi_posegraph))
-    print('Binary: ' + str(args.binary))
-    print('Semantic: ' + str(args.semantic))
-    print('Latefusion: ' + str(args.latefusion))
-    print('H: ' + str(args.H))
-    print('Posenorm: ' + str(cfg.POSENORM))
+    net = SIGAN(use_skebox=args.use_skebox, use_bodypart=args.use_bodypart, use_pm=args.use_pm,
+                use_sg=args.use_sg, use_sg_att=args.use_sg_att,
+                use_ag=args.use_ag, use_ag_att=args.use_ag_att,
+                use_binary=args.use_binary)
 
-    net = SPGCN(posetype=posetype, num_fc=args.num_fc,
-                posemap=args.posemap, posegraph=args.posegraph, posegraph_att=args.posegraph_att,
-                bi_posegraph=args.bi_posegraph,
-                H=args.H,
-                binary=args.binary, bodypoint=args.bodypoint, bodypart=args.bodypart,
-                semantic=args.semantic, latefusion=args.latefusion)
-
-    train_net(net, Trainval_GT, Trainval_N, output_dir, tb_dir, args.Pos_augment,
-              args.Neg_select, args.Restore_flag, posetype, weight, max_iters=args.max_iters)
+    train_net(net, Trainval_GT, Trainval_N, output_dir, weight,
+              args.Pos_augment, args.Neg_select, args.Restore_flag,
+              args.use_pm, max_iters=args.max_iters)

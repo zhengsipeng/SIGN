@@ -212,22 +212,6 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
                 # all the rest
                 agent_name = Action_dic_inv[i].split("_")[0] + '_agent'
                 dic[agent_name] = np.max(Human_out[5]) * Score_obj[max_idx[i]][4 + i]
-                # '''
-
-                '''
-                if i == 6:
-                    agent_name = 'talk_on_phone_agent'  
-                    dic[agent_name] = np.max(Human_out[5]) * prediction_H[0][0][i]
-                    continue
-
-                if i == 8:
-                    agent_name = 'work_on_computer_agent'  
-                    dic[agent_name] = np.max(Human_out[5]) * prediction_H[0][0][i]
-                    continue 
-
-                agent_name =  Action_dic_inv[i].split("_")[0] + '_agent'  
-                dic[agent_name] = np.max(Human_out[5]) * prediction_H[0][0][i]
-                '''
 
             # role mAP
             for i in range(29):
@@ -255,21 +239,13 @@ def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir,
     np.random.seed(cfg.RNG_SEED)
     detection = []
     count = 0
-
-    # timers
     _t = {'im_detect': Timer(), 'misc': Timer()}
-
     for line in open(cfg.DATA_DIR + '/' + '/v-coco/data/splits/vcoco_test.ids', 'r'):
         _t['im_detect'].tic()
-
         image_id = int(line.rstrip())
-
         im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object_thres, human_thres, prior_flag,
                   detection, posetype)
-
         _t['im_detect'].toc()
-
         print('im_detect: {:d}/{:d} {:.3f}s'.format(count + 1, 4946, _t['im_detect'].average_time))
         count += 1
-
     pickle.dump(detection, open(output_dir, "wb"))
