@@ -270,7 +270,7 @@ class SPGCN():
             fc7_SO = tf.reduce_mean(pool5_SO, axis=[1, 2])
 
             Concat_SH = tf.concat([fc7_H[: self.H_num], fc7_SH], 1)
-            fc8_SH = slim.fully_connected(Concat_SHsp, self.num_fc, scope='fc8_SH')
+            fc8_SH = slim.fully_connected(Concat_SH, self.num_fc, scope='fc8_SH')
             fc8_SH = slim.dropout(fc8_SH, keep_prob=self.keep_prob_tail, is_training=is_training, scope='dropout8_SH')
             fc9_SH = slim.fully_connected(fc8_SH, self.num_fc, scope='fc9_SH')
             fc9_SH = slim.dropout(fc9_SH, keep_prob=self.keep_prob_tail, is_training=is_training, scope='dropout9_SH')
@@ -281,7 +281,7 @@ class SPGCN():
             fc9_SO = slim.fully_connected(fc8_SO, self.num_fc, scope='fc9_SO')
             fc9_SO = slim.dropout(fc9_SO, keep_prob=0.5, is_training=is_training, scope='dropout9_SO')
 
-            fc9_SHsp = tf.concat([Concat_SH, Concat_SO], 1)
+            fc9_SHsp = tf.concat([fc7_H, fc7_O], 1)
         return fc9_SH, fc9_SO, fc9_SHsp
 
     def bottleneck(self, bottom, name, reuse=False):
