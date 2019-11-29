@@ -124,7 +124,7 @@ def Get_next_semantic(clsid, clsid2cls, objs_bert):
     return semantic
 
 
-def Get_next_sp_with_pose(human_box, object_box, human_pose, img_shape, objscore):
+def Get_next_sp_with_pose(human_box, object_box, human_pose, objscore):
     InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
                           max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
     height = InteractionPattern[3] - InteractionPattern[1] + 1
@@ -141,10 +141,7 @@ def Get_next_sp_with_pose(human_box, object_box, human_pose, img_shape, objscore
     Pose_nodes += [object_box[0], object_box[1], float(objscore), object_box[2], object_box[3], float(objscore)]
     len_nodes = len(Pose_nodes)
     Pose_nodes = np.asarray(Pose_nodes).reshape(-1, len_nodes)
-
-    #gboxes = generate_partbox(human_pose, human_box)
-
-    return Pattern, Pose_nodes#, gboxes
+    return Pattern, Pose_nodes
 
 
 def bb_IOU(boxA, boxB):
@@ -301,19 +298,17 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
         action_HO.extend(action_HO_temp)
         action_H.extend(action_H_temp)
 
-        Pose_nodes, pose_none_flag = get_pose_nodes(GT[i][5], Human, pose_none_flag, shape)  # list with length of 51
+        sgraph_in, pose_none_flag = get_sgraph_in(GT[i][5], Human, pose_none_flag)  # list with length of 51
         for j in range(length_min):
             ori_poses.append(GT[i][5])
             Object_nodeA = [Object_augmented_temp[j][1], Object_augmented_temp[j][2],
                             1]  # left up corner of the object box
             Object_nodeB = [Object_augmented_temp[j][3], Object_augmented_temp[j][4],
                             1]  # right down corner of the object box
-            norm_nodes = gnodes_norm(Pose_nodes + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
-            Gnodes_ = np.asarray(norm_nodes)
-            SGinput.append(Gnodes_)
-            # generate 17 part boxes  [1, 17, 5]
-            skeboxes = np.concatenate([skeboxes, generate_pointbox(GT[i][5], Human, shape)], axis=0)
-            bodyparts = np.concatenate([bodyparts, generate_partbox(GT[i][5], Human, shape)], axis=0)
+            norm_sgraph_in = sgraph_in_norm(sgraph_in + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
+            SGinput.append(norm_sgraph_in)
+            skeboxes = np.concatenate([skeboxes, generate_skebox(GT[i][5], Human, shape)], axis=0)  # [1, 17, 5]
+            bodyparts = np.concatenate([bodyparts, generate_bodypart(GT[i][5], Human, shape)], axis=0)
 
     action_sp = np.array(action_HO).copy()
     num_pos = len(Human_augmented)
@@ -321,7 +316,7 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
     if image_id in Trainval_Neg:
         if len(Trainval_Neg[image_id]) < Neg_select:
             for Neg in Trainval_Neg[image_id]:
-                Neg_Pose_Nodes, pose_none_flag = get_pose_nodes(Neg[7], Neg[2], pose_none_flag, shape)
+                Neg_Pose_Nodes, pose_none_flag = get_sgraph_in(Neg[7], Neg[2], pose_none_flag)
                 Human_augmented = np.concatenate(
                     (Human_augmented, np.array([0, Neg[2][0], Neg[2][1], Neg[2][2], Neg[2][3]]).reshape(1, 5)), axis=0)
                 Object_augmented = np.concatenate(
@@ -329,15 +324,15 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
                 Union_augmented = np.concatenate([Union_augmented, get_union(Neg[2], Neg[3])], axis=0)
                 ori_poses.append(Neg[7])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_nodes = gnodes_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
-                SGinput.append(norm_nodes)
-                skeboxes = np.concatenate([skeboxes, generate_pointbox(Neg[7], Neg[2], shape)], axis=0)
-                bodyparts = np.concatenate([bodyparts, generate_partbox(Neg[7], Neg[2], shape)], axis=0)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                SGinput.append(norm_sgraph_in)
+                skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
+                bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
         else:
             List = random.sample(range(len(Trainval_Neg[image_id])), len(Trainval_Neg[image_id]))
             for i in range(Neg_select):
                 Neg = Trainval_Neg[image_id][List[i]]
-                Neg_Pose_Nodes, pose_none_flag = get_pose_nodes(Neg[7], Neg[2], pose_none_flag, shape)
+                Neg_Pose_Nodes, pose_none_flag = get_sgraph_in(Neg[7], Neg[2], pose_none_flag)
                 Human_augmented = np.concatenate(
                     (Human_augmented, np.array([0, Neg[2][0], Neg[2][1], Neg[2][2], Neg[2][3]]).reshape(1, 5)), axis=0)
                 Object_augmented = np.concatenate(
@@ -345,10 +340,10 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
                 Union_augmented = np.concatenate([Union_augmented, get_union(Neg[2], Neg[3])], axis=0)
                 ori_poses.append(Neg[7])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_nodes = gnodes_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
-                SGinput.append(norm_nodes)
-                skeboxes = np.concatenate([skeboxes, generate_pointbox(Neg[7], Neg[2], shape)], axis=0)
-                bodyparts = np.concatenate([bodyparts, generate_partbox(Neg[7], Neg[2], shape)], axis=0)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                SGinput.append(norm_sgraph_in)
+                skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
+                bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
     num_pos_neg = len(Human_augmented)
 
     # spatial
@@ -358,13 +353,13 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
             spatial_ = Get_next_sp_with_posemap(Human_augmented[i][1:], Object_augmented[i][1:],
                                                 ori_poses[i]).reshape(1, 64, 64, 3)
             spatial = np.concatenate((spatial, spatial_), axis=0)
-            spatial = spatial.reshape(num_pos_neg, 64, 64, 3)
+        spatial = spatial.reshape(num_pos_neg, 64, 64, 3)
     else:
         spatial = np.empty((0, 64, 64, 2), dtype=np.float32)
         for i in range(num_pos_neg):
             spatial_ = Get_next_sp(Human_augmented[i][1:], Object_augmented[i][1:]).reshape(1, 64, 64, 2)
             spatial = np.concatenate((spatial, spatial_), axis=0)
-            spatial = spatial.reshape(num_pos_neg, 64, 64, 2)
+        spatial = spatial.reshape(num_pos_neg, 64, 64, 2)
 
     mask_sp_ = np.asarray(
         [1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1]).reshape(1, 29)
@@ -394,8 +389,8 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, use_pm):
     action_H = np.array(action_H, dtype='int32')
 
     Human_augmented = Human_augmented.reshape(num_pos_neg, 5)
-    Object_augmented = Object_augmented[:num_pos].reshape(num_pos, 5)
-    Union_augmented = Union_augmented[:num_pos].reshape(num_pos, 5)
+    Object_augmented = Object_augmented.reshape(num_pos_neg, 5)
+    Union_augmented = Union_augmented.reshape(num_pos_neg, 5)
 
     action_sp = action_sp.reshape(num_pos_neg, 29)
     action_HO = action_HO.reshape(num_pos, 29)
@@ -485,24 +480,24 @@ def Augmented_HO_Neg_HICO_v2(GT, Trainval_Neg, shape, Pos_augment, Neg_select, c
         Object_augmented.extend(Object_augmented_temp)
         action_HO.extend(action_HO_temp)
 
-        Pose_nodes, pose_none_flag = get_pose_nodes(GT[i][5], Human, pose_none_flag, shape)  # list with length of 51
+        Pose_nodes, pose_none_flag = get_sgraph_in(GT[i][5], Human, pose_none_flag)  # list with length of 51
         for j in range(num_min):
             origin_poses.append(GT[i][5])
             objclsid.append(GT[i][-1])
             Object_nodeA = [Object_augmented_temp[j][1], Object_augmented_temp[j][2], 1]  # left up corner of the object box
             Object_nodeB = [Object_augmented_temp[j][3], Object_augmented_temp[j][4], 1]  # right down corner of the object box
-            norm_nodes = gnodes_norm(Pose_nodes + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
+            norm_nodes = sgraph_in_norm(Pose_nodes + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
             Gnodes_ = np.asarray(norm_nodes)
             Gnodes.append(Gnodes_)
             # generate 17 part boxes  [1, 17, 5]
-            partboxes = np.concatenate([partboxes, generate_pointbox(GT[i][5], Human)], axis=0)
+            partboxes = np.concatenate([partboxes, generate_skebox(GT[i][5], Human)], axis=0)
 
     num_pos = len(Human_augmented)
 
     if image_id in Trainval_Neg:
         if len(Trainval_Neg[image_id]) < Neg_select:
             for Neg in Trainval_Neg[image_id]:
-                Neg_Pose_Nodes, pose_none_flag = get_pose_nodes(Neg[7], Neg[2], pose_none_flag, shape)
+                Neg_Pose_Nodes, pose_none_flag = get_sgraph_in(Neg[7], Neg[2], pose_none_flag)
                 Human_augmented = np.concatenate(
                     (Human_augmented, np.array([0, Neg[2][0], Neg[2][1], Neg[2][2], Neg[2][3]]).reshape(1, 5)), axis=0)
                 Object_augmented = np.concatenate(
@@ -511,15 +506,15 @@ def Augmented_HO_Neg_HICO_v2(GT, Trainval_Neg, shape, Pos_augment, Neg_select, c
                 origin_poses.append(Neg[7])
                 objclsid.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_nodes = gnodes_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_nodes = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
                 Gnodes.append(norm_nodes)
-                partboxes = np.concatenate([partboxes, generate_pointbox(Neg[7], Neg[2])], axis=0)
+                partboxes = np.concatenate([partboxes, generate_skebox(Neg[7], Neg[2])], axis=0)
 
         else:
             List = random.sample(range(len(Trainval_Neg[image_id])), len(Trainval_Neg[image_id]))
             for i in range(Neg_select):
                 Neg = Trainval_Neg[image_id][List[i]]
-                Neg_Pose_Nodes, pose_none_flag = get_pose_nodes(Neg[7], Neg[2], pose_none_flag, shape)
+                Neg_Pose_Nodes, pose_none_flag = get_sgraph_in(Neg[7], Neg[2], pose_none_flag)
                 Human_augmented = np.concatenate(
                     (Human_augmented, np.array([0, Neg[2][0], Neg[2][1], Neg[2][2], Neg[2][3]]).reshape(1, 5)), axis=0)
                 Object_augmented = np.concatenate(
@@ -528,9 +523,9 @@ def Augmented_HO_Neg_HICO_v2(GT, Trainval_Neg, shape, Pos_augment, Neg_select, c
                 origin_poses.append(Neg[7])
                 objclsid.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_nodes = gnodes_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_nodes = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
                 Gnodes.append(norm_nodes)
-                partboxes = np.concatenate([partboxes, generate_pointbox(Neg[7], Neg[2])], axis=0)
+                partboxes = np.concatenate([partboxes, generate_skebox(Neg[7], Neg[2])], axis=0)
 
     num_pos_neg = len(Human_augmented)
 
@@ -582,21 +577,21 @@ def Augmented_HO_Neg_HICO_v2(GT, Trainval_Neg, shape, Pos_augment, Neg_select, c
            sparse_binary_label, partboxes, pose_none_flag
 
 
-def get_pose_nodes(pose_nodes, Human, pose_none_flag, shape):
+def get_sgraph_in(pose_nodes, Human, pose_none_flag):
     if pose_nodes is None:  # the human pose is None
         centric_x = (Human[0] + Human[2]) / 2.
         centric_y = (Human[1] + Human[3]) / 2.
-        Pose_nodes = []
+        sgraph_in = []
         for i in range(17):
-            Pose_nodes += [centric_x, centric_y, 1]
+            sgraph_in += [centric_x, centric_y, 1]
         pose_none_flag = 0
     else:
-        Pose_nodes = pose_nodes
+        sgraph_in = pose_nodes
 
-    return Pose_nodes, pose_none_flag
+    return sgraph_in, pose_none_flag
 
 
-def gnodes_norm(Pose_nodes, Human, pose_norm):
+def sgraph_in_norm(Pose_nodes, Human, pose_norm):
     if pose_norm == 1:
         center_x, center_y = Pose_nodes[0], Pose_nodes[1]
         for i in range(len(Pose_nodes)):
@@ -704,7 +699,7 @@ def Get_next_sp_with_posemap(human_box, object_box, human_pose, num_joints=17):
     return Pattern
 
 
-def generate_pointbox(pose, Human, shape):
+def generate_skebox(pose, Human, shape):
     if pose is None:  # the human pose is None
         centric_x = (Human[0] + Human[2]) / 2.
         centric_y = (Human[1] + Human[3]) / 2.
@@ -726,7 +721,7 @@ def generate_pointbox(pose, Human, shape):
     return boxes
 
 
-def generate_partbox(pose, Human, shape):
+def generate_bodypart(pose, Human, shape):
     if pose is None:  # the human pose is None
         centric_x = (Human[0] + Human[2]) / 2.
         centric_y = (Human[1] + Human[3]) / 2.
@@ -789,5 +784,4 @@ def get_union(boxA, boxB):
         y2 = max(boxA[3], boxB[3])
     else:
         raise NotImplementedError
-
     return np.asarray([0, x1, y1, x2, y2]).reshape([-1, 5])

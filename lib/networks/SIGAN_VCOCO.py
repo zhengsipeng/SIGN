@@ -40,6 +40,7 @@ class SIGAN():
                  use_skebox=False,
                  use_bodypart=False,
                  use_pm=False,
+                 use_u=False,
                  use_sg=False,
                  use_sg_att=False,
                  use_ag=False,
@@ -50,6 +51,7 @@ class SIGAN():
         self.use_skebox = use_skebox  # whether use skeleton box
         self.use_bp = use_bodypart    # whether use body part
         self.use_pm = use_pm          # whether use pose map
+        self.use_u = use_u            # whether use union box
         self.use_sg = use_sg          # whether use spatial graph
         self.use_sg_att = use_sg_att  # whether use spatial graph attention
         self.use_ag = use_ag          # whether use appearance graph attention
@@ -72,7 +74,7 @@ class SIGAN():
         self.num_binary = 1  # existence of HOI (0 or 1)
         self.num_classes = 29
         self.is_training = is_training
-        self.keep_prob = cfg.TRAIN_DROP_OUT_BINARY if self.is_training else 1
+        self.keep_prob = 0.5 if self.is_training else 1
         self.sp_in_len = 3 if use_pm else 2
 
         # Training data feed
@@ -90,11 +92,19 @@ class SIGAN():
         self.scope = 'resnet_v1_50'
         self.num_fc = 1024
         self.stride = [16, ]
-        self.blocks = [resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-                       resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
-                       resnet_v1_block('block3', base_depth=256, num_units=6, stride=1),
-                       resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
-                       resnet_v1_block('block5', base_depth=512, num_units=3, stride=1)]
+        if tf.__version__ == '1.1.0':
+            self.blocks = [resnet_utils.Block('block1', resnet_v1.bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
+                           resnet_utils.Block('block2', resnet_v1.bottleneck, [(512, 128, 1)] * 3 + [(512, 128, 2)]),
+                           resnet_utils.Block('block3', resnet_v1.bottleneck, [(1024, 256, 1)] * 5 + [(1024, 256, 1)]),
+                           resnet_utils.Block('block4', resnet_v1.bottleneck, [(2048, 512, 1)] * 3),
+                           resnet_utils.Block('block5', resnet_v1.bottleneck, [(2048, 512, 1)] * 3)]
+        else:
+            from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
+            self.blocks = [resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
+                           resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
+                           resnet_v1_block('block3', base_depth=256, num_units=6, stride=1),
+                           resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
+                           resnet_v1_block('block5', base_depth=512, num_units=3, stride=1)]
 
         # GCN setting
         # Spatial GCN
@@ -113,11 +123,11 @@ class SIGAN():
 
     def sp_to_head(self):
         with tf.variable_scope(self.scope, self.scope):
-            conv1_sp = slim.conv2d(self.spatial[:, :, :, 0:2], 64, [5, 5], padding='VALID', scope='conv1_sp')
+            conv1_sp = slim.conv2d(self.spatial, 64, [5, 5], padding='VALID', scope='conv1_sp')
             pool1_sp = slim.max_pool2d(conv1_sp, [2, 2], scope='pool1_sp')
             conv2_sp = slim.conv2d(pool1_sp, 32, [5, 5], padding='VALID', scope='conv2_sp')
             pool2_sp = slim.max_pool2d(conv2_sp, [2, 2], scope='pool2_sp')
-            pool2_flat_sp = slim.flatten(pool2_sp)
+            pool2_flat_sp = slim.flatten(pool2_sp)  # 8194
             fc_sp = slim.fully_connected(pool2_flat_sp, 1024, scope='fc_sp')
             fc_sp = slim.dropout(fc_sp, keep_prob=self.keep_prob, scope='dropout_fc_sp')
         return fc_sp
@@ -206,7 +216,7 @@ class SIGAN():
 
     def res5(self, pool5, is_training, reuse):
         with slim.arg_scope(resnet_arg_scope(is_training=is_training)):
-            fc7, _ = resnet_v1.resnet_v1(pool5, self.blocks[-1:],
+            fc7, _ = resnet_v1.resnet_v1(pool5, self.blocks[-2:-1],
                                          global_pool=False,
                                          include_root_block=False,
                                          reuse=reuse,
@@ -284,20 +294,27 @@ class SIGAN():
 
     def region_classification(self, fc_HOsp, is_training, initializer, name):
         with tf.variable_scope(name) as scope:
+            if self.use_u:
+                fc_HOsp = tf.concat([fc_HOsp, self.predictions['fc_U']], axis=1)
             if self.use_sg:
                 fc_HOsp = tf.concat([fc_HOsp, self.predictions['sgcn_out']], axis=1)  # + 512
             if self.use_ag:
                 fc_HOsp = tf.concat([fc_HOsp, self.predictions['agcn_out']], axis=1)  # + 1024
-            if self.use_pm:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['pm_out']], axis=1)  # + 1024
+            #if self.use_pm:
+            #    fc_HOsp = tf.concat([fc_HOsp, self.predictions['pm_out']], axis=1)  # + 1024
             if self.use_skebox:
                 fc_HOsp = tf.concat([fc_HOsp, self.predictions['skbox_out']], axis=1)  # + 1024
             if self.use_bp:
                 fc_HOsp = tf.concat([fc_HOsp, self.predictions['bp_out']], axis=1)  # + 1024
 
+            fc_HOsp = slim.fully_connected(fc_HOsp, 1024, scope='fc_HOsp1')
+            fc_HOsp = slim.dropout(fc_HOsp, keep_prob=self.keep_prob, scope='dropout_HOsp1')
+            fc_HOsp = slim.fully_connected(fc_HOsp, 1024, scope='fc_HOsp2')
+            fc_HOsp = slim.dropout(fc_HOsp, keep_prob=self.keep_prob, scope='dropout_HOsp2')
+
             cls_score = slim.fully_connected(fc_HOsp, self.num_classes, weights_initializer=initializer,
-                                             trainable=is_training, activation_fn=None, scope='cls_score_O')
-            cls_prob = tf.nn.sigmoid(cls_score, name='cls_prob_O')
+                                             trainable=is_training, activation_fn=None, scope='cls_score')
+            cls_prob = tf.nn.sigmoid(cls_score, name='cls_prob')
             tf.reshape(cls_prob, [1, self.num_classes])
             self.predictions["cls_score"] = cls_score
             self.predictions["cls_prob"] = cls_prob
@@ -394,6 +411,10 @@ class SIGAN():
         fc_H = self.res5(pool_H, is_training, False)  # 2048
         fc_O = self.res5(pool_O, is_training, True)   # 2048
 
+        if self.use_u:
+            pool_U = self.crop_pool_layer(head, self.U_boxes, 'Crop_U', cfg.POOLING_SIZE)
+            fc_U = self.res5(pool_U, is_training, True)
+            self.predictions['fc_U'] = fc_U
         # whether use spatial GCN
         if self.use_sg:
             x = self.spatial_GCN(self.SGinput, self.use_sg_att)  # input N, C, T, V, M
@@ -433,6 +454,7 @@ class SIGAN():
                 fc_skbox = tf.reshape(slim.avg_pool2d(fc2_sk, [1, 17]), [-1, 2048])
                 self.predictions['skbox_out'] = fc_skbox
         # whether use pose map
+        '''
         if self.use_pm:
             conv1_pm = slim.conv2d(self.spatial[:, :, :, 2:], 32, [5, 5], padding='VALID', scope='conv1_pm')
             pool1_pm = slim.max_pool2d(conv1_pm, [2, 2], scope='pool1_pm')
@@ -442,25 +464,23 @@ class SIGAN():
             pm_fc = slim.fully_connected(pool2_flat_pm, 1024, scope='pm_fc')
             pm_fc = slim.dropout(pm_fc, keep_prob=self.keep_prob, is_training=is_training, scope='dropout_pm')
             self.predictions['pm_out'] = pm_fc
-
-        # Remain iCAN components for binary
-        head_phi = slim.conv2d(head, 512, [1, 1], scope='head_phi')
-        head_g = slim.conv2d(head, 512, [1, 1], scope='head_g')
-        Att_H = self.attention_pool_layer_H(head_phi, fc_H[:self.H_num, :], is_training, 'Att_H')
-        Att_H = self.attention_norm_H(Att_H, 'Norm_Att_H')
-        att_head_H = tf.multiply(head_g, Att_H)
-        Att_O = self.attention_pool_layer_O(head_phi, fc_O, is_training, 'Att_O')
-        Att_O = self.attention_norm_O(Att_O, 'Norm_Att_O')
-        att_head_O = tf.multiply(head_g, Att_O)
-        pool5_SH = self.bottleneck(att_head_H, 'bottleneck', False)
-        pool5_SO = self.bottleneck(att_head_O, 'bottleneck', True)
-
-        fc7_SH, fc7_SO = self.head_to_tail(fc_H, fc_O, pool5_SH, pool5_SO, is_training)
-
+        '''
         fc_HOsp = tf.concat([fc_H, fc_O, sp], 1)
         self.region_classification(fc_HOsp, is_training, initializer, 'classification')
 
         if self.use_binary:
+            # Remain iCAN components for TIN binary
+            head_phi = slim.conv2d(head, 512, [1, 1], scope='head_phi')
+            head_g = slim.conv2d(head, 512, [1, 1], scope='head_g')
+            Att_H = self.attention_pool_layer_H(head_phi, fc_H[:self.H_num, :], is_training, 'Att_H')
+            Att_H = self.attention_norm_H(Att_H, 'Norm_Att_H')
+            att_head_H = tf.multiply(head_g, Att_H)
+            Att_O = self.attention_pool_layer_O(head_phi, fc_O, is_training, 'Att_O')
+            Att_O = self.attention_norm_O(Att_O, 'Norm_Att_O')
+            att_head_O = tf.multiply(head_g, Att_O)
+            pool5_SH = self.bottleneck(att_head_H, 'bottleneck', False)
+            pool5_SO = self.bottleneck(att_head_O, 'bottleneck', True)
+            fc7_SH, fc7_SO = self.head_to_tail(fc_H, fc_O, pool5_SH, pool5_SO, is_training)
             fc9_binary = self.binary_discriminator(fc_H, fc_O, fc7_SH, fc7_SO, sp, is_training, 'fc_binary')
             self.binary_classification(fc9_binary, is_training, initializer, 'binary_classification')
 
@@ -483,27 +503,27 @@ class SIGAN():
                 tf.multiply(tf.nn.sigmoid_cross_entropy_with_logits(labels=label_HO, logits=cls_score[:self.H_num]),
                             HO_mask))
             self.losses['HO_cross_entropy'] = HO_cross_entropy
-            loss = 2 * HO_cross_entropy
+            loss = HO_cross_entropy
 
             if self.use_binary:
                 cls_score_binary = self.predictions["cls_score_binary"]
                 binary_cross_entropy = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=label_binary, logits=cls_score_binary))
                 self.losses['binary_cross_entropy'] = binary_cross_entropy
-                loss += binary_cross_entropy
+                loss += (HO_cross_entropy + binary_cross_entropy)
 
             self.losses['total_loss'] = loss
         return loss
 
     def train_step(self, sess, blobs, lr, train_op):
         # [N, 51+6]
-        SGinput = blobs['Gnodes'].reshape(-1, 3, 1, 17+2, 1)
+        SGinput = blobs['SGinput'].reshape(-1, 3, 1, 17+2, 1)
         if self.num_SGnodes != 19:
             SGinput = SGinput[:, :, :, :self.num_SGnodes, :]
 
         feed_dict = {self.image: blobs['image'], self.head: blobs['head'],
                      self.H_num: blobs['H_num'],
-                     self.H_boxes: blobs['Hsp_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes'],
+                     self.H_boxes: blobs['H_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes'],
                      self.spatial: blobs['sp'],
                      self.SGinput: SGinput,
                      self.skeboxes: blobs['skeboxes'], self.bodyparts: blobs['bodyparts'],
@@ -514,12 +534,13 @@ class SIGAN():
                      }
         loss_cls_HO, loss, _ = sess.run([self.losses['HO_cross_entropy'],
                                          self.losses['total_loss'],
+                                         #self.predictions['fc_U'],
                                          train_op],
                                          feed_dict=feed_dict)
         return loss_cls_HO, loss
 
     def test_image_HO(self, sess, image, blobs):
-        SGinput = blobs['Gnodes'].reshape(-1, 3, 1, 17+2, 1)
+        SGinput = blobs['SGinput'].reshape(-1, 3, 1, 17+2, 1)
         if self.num_SGnodes != 19:
             SGinput = SGinput[:, :, :, :self.num_SGnodes, :]
         feed_dict = {self.image: image, self.head: blobs['head'],
@@ -529,6 +550,5 @@ class SIGAN():
                      self.SGinput: SGinput,
                      self.H_boxes: blobs['H_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes']
                      }
-        cls_prob_HO = sess.run([self.predictions["cls_prob_HO_final"]], feed_dict=feed_dict)
-
-        return cls_prob_HO
+        cls_prob = sess.run([self.predictions["cls_prob"]], feed_dict=feed_dict)
+        return cls_prob

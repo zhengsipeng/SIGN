@@ -29,8 +29,6 @@ __C.TRAIN_INIT_WEIGHT = 1
 
 #refer to models/train_solver
 
-# Pose Type 1: general pose maps 2: GCN pose feature
-__C.POSETYPE = 1
 
 # Restore ResNet weights or not (0 or 1)
 __C.TRAIN_RES_RESTORE = 1

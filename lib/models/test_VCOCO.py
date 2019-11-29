@@ -5,11 +5,11 @@ from __future__ import print_function
 from ult.config import cfg
 from ult.timer import Timer
 from ult.ult import Get_next_sp_with_pose
-from ult.ult import Get_next_sp_with_posemap, gnodes_norm
-from ult.ult import get_pose_nodes, get_union, generate_pointbox, generate_partbox
+from ult.ult import Get_next_sp_with_posemap
+from ult.ult import get_sgraph_in, sgraph_in_norm
+from ult.ult import get_union, generate_skebox, generate_bodypart
 from ult.apply_prior import apply_prior
 import copy
-import os
 import cv2
 import pickle
 import numpy as np
@@ -25,8 +25,8 @@ def get_blob(image_id):
     return im_orig, im_shape
 
 
-def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object_thres, human_thres, prior_flag,
-              detection, posetype):
+def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
+              object_thres, human_thres, prior_flag, detection, use_pm):
     im_orig, im_shape = get_blob(image_id)
 
     blobs = {}
@@ -59,42 +59,33 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
             dic['person_box'] = Human_out[2]
             dic['H_det'] = np.max(Human_out[5])
 
-            #dic['H_Score'] = prediction_H
-
-            if posetype == 1:
-                c = 2
-            else:
-                c = 3
+            c = 3 if use_pm else 2
             H_num = 0
             H_boxes, O_boxes, U_boxes = np.zeros([0, 5]), np.zeros([0, 5]), np.zeros([0, 5])
-            Gnodes = np.zeros([0, 51+6])
-            Patterns = np.zeros([0, 64, 64, c])
-            pointboxes = np.zeros([0, 17, 5])
-            partboxes = np.zeros([0, 6, 5])
+            spatial = np.zeros([0, 64, 64, c])
+            SGinput = np.zeros([0, 51+6])
+            skeboxes = np.zeros([0, 17, 5])
+            bodyparts = np.zeros([0, 6, 5])
             for Object in Test_RCNN[image_id]:
-                if (np.max(Object[5]) > object_thres) and not (np.all(Object[2] == Human_out[2])):  # This is a valid object
-
+                if (np.max(Object[5]) > object_thres) and not (np.all(Object[2] == Human_out[2])):
                     H_num += 1
                     O_box = np.array([0, Object[2][0], Object[2][1], Object[2][2], Object[2][3]]).reshape(1, 5)
                     U_box = get_union(H_box[0], O_box[0])
-                    human_pose = copy.deepcopy(Human_out[6])
-                    Pose_nodes, pose_none_flag = get_pose_nodes(human_pose, Human_out[2], 1, im_shape)
-                    Pattern, gnode = Get_next_sp_with_pose(Human_out[2], Object[2], Pose_nodes, im_shape, Object[5])
-                    norm_gnode = gnodes_norm(gnode[0], Human_out[2], cfg.POSENORM).reshape([1, 51+6])
-                    if posetype == 2:
-                        Pattern = Get_next_sp_with_posemap(Human_out[2], Object[2],
-                                                           human_pose, num_joints=17)
-                    Pattern = Pattern.reshape(1, 64, 64, -1)
-                    Gnodes = np.concatenate([Gnodes, norm_gnode])
+                    posenodes, pose_none_flag = get_sgraph_in(copy.deepcopy(Human_out[6]), Human_out[2], 1)
+                    spatial_, sgraph_in = Get_next_sp_with_pose(Human_out[2], Object[2], posenodes, Object[5])
+                    norm_gnode = sgraph_in_norm(sgraph_in[0], Human_out[2], cfg.POSENORM).reshape([1, 51+6])
+                    if use_pm:
+                        spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2],
+                                                            copy.deepcopy(Human_out[6]), num_joints=17)
+                    SGinput = np.concatenate([SGinput, norm_gnode])
                     H_boxes = np.concatenate([H_boxes, H_box], axis=0)
                     O_boxes = np.concatenate([O_boxes, O_box], axis=0)
                     U_boxes = np.concatenate([U_boxes, U_box], axis=0)
-                    Patterns = np.concatenate([Patterns, Pattern], axis=0)
-                    pointboxes = np.concatenate([pointboxes, generate_pointbox(
-                        copy.deepcopy(Human_out[6]), Human_out[2], im_shape)], axis=0)
-                    partboxes = np.concatenate([partboxes, generate_partbox(
-                        copy.deepcopy(Human_out[6]), Human_out[2], im_shape)], axis=0)
-
+                    spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, -1)], axis=0)
+                    skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
+                                                                           Human_out[2], im_shape)], axis=0)
+                    bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
+                                                                            Human_out[2], im_shape)], axis=0)
                     Object_bbox.append(Object[2])
                     Object_class.append(Object[4])
                     Object_det.append(np.max(Object[5]))
@@ -104,10 +95,8 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
 
             # all object bboxes in image
             dic['object_box'] = Object_bbox
-
             # classes for objects
             dic['object_class'] = Object_class
-
             # object detection score
             dic['O_det'] = Object_det
 
@@ -115,11 +104,10 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
             blobs['H_boxes'] = H_boxes
             blobs['O_boxes'] = O_boxes
             blobs['U_boxes'] = U_boxes
-            blobs['Gnodes'] = Gnodes
-            blobs['sp'] = Patterns
-            blobs['pointboxes'] = pointboxes
-            blobs['partboxes'] = partboxes
-            #prediction_HO, prediction_binary = net.test_image_HO(sess, im_orig, blobs)
+            blobs['SGinput'] = SGinput
+            blobs['sp'] = spatial
+            blobs['skeboxes'] = skeboxes
+            blobs['bodyparts'] = bodyparts
             if H_num > 0:
                 blobs['head'] = np.load('Temp/vcoco/test/' + str(image_id) + '.npy')
                 prediction_HO = net.test_image_HO(sess, im_orig, blobs)
@@ -128,12 +116,8 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
                 #if not os.path.exists('Temp/vcoco/test/' + str(image_id) + '.npy'):
                 #    print(image_id, 'saved')
                 #    np.save('Temp/vcoco/test/' + str(image_id) + '.npy', head)
-            # remain iCAN format
-            #print(prediction_HO[0].shape)
-            #print(prediction_HO.shape)
             
             # Predict actrion using human and object appearance
-
             Score_obj = np.empty((0, 4 + 29), dtype=np.float32)
             onum = 0
             for Object in Test_RCNN[image_id]:
@@ -235,7 +219,7 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object
 
 
 def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir,
-             object_thres, human_thres, prior_flag, posetype):
+             object_thres, human_thres, prior_flag, use_pm):
     np.random.seed(cfg.RNG_SEED)
     detection = []
     count = 0
@@ -244,7 +228,7 @@ def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir,
         _t['im_detect'].tic()
         image_id = int(line.rstrip())
         im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object_thres, human_thres, prior_flag,
-                  detection, posetype)
+                  detection, use_pm)
         _t['im_detect'].toc()
         print('im_detect: {:d}/{:d} {:.3f}s'.format(count + 1, 4946, _t['im_detect'].average_time))
         count += 1

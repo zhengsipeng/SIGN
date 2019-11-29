@@ -69,18 +69,14 @@ class SolverWrapper(object):
             path_iter = self.pretrained_model.split('.ckpt')[0]
             iter_num = path_iter.split('_')[-1]
 
-            if cfg.TRAIN_MODULE_CONTINUE == 1:
+            if cfg.TRAIN_MODULE_CONTINUE:
                 global_step = tf.Variable(int(iter_num), trainable=False)
-            elif cfg.TRAIN_MODULE_CONTINUE == 2:
-                global_step = tf.Variable(0, trainable=False)
             else:
-                raise NotImplementedError
+                global_step = tf.Variable(0, trainable=False)
 
             # lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
             #                                staircase=True)
             lr = tf.train.piecewise_constant(global_step, boundaries=[24000, 48000], values=[0.04, 0.004, 0.00004])
-
-            print('LR: {:06f}, stepsize: {:d}'.format(cfg.TRAIN.LEARNING_RATE, cfg.TRAIN.STEPSIZE))
 
             self.optimizer = tf.train.MomentumOptimizer(lr, cfg.TRAIN.MOMENTUM)
 
@@ -100,9 +96,7 @@ class SolverWrapper(object):
             saver_t += [var for var in tf.model_variables() if 'conv4' in var.name]
             saver_t += [var for var in tf.model_variables() if 'conv5' in var.name]
             saver_t += [var for var in tf.model_variables() if 'shortcut' in var.name]
-
             sess.run(tf.global_variables_initializer())
-
             print('Restoring model snapshots from {:s}'.format(self.pretrained_model))
             for var in tf.trainable_variables():
                 print(var.name, var.eval().mean())
@@ -116,7 +110,6 @@ class SolverWrapper(object):
                 print(var.name, var.eval().mean())
             print('Restoring model snapshots from {:s}'.format(self.pretrained_model))
             saver_t = {}
-
             # Add block0
             for ele in tf.model_variables():
                 if 'resnet_v1_50/conv1/weights' in ele.name or 'resnet_v1_50/conv1/BatchNorm/beta' in ele.name or 'resnet_v1_50/conv1/BatchNorm/gamma' in ele.name or 'resnet_v1_50/conv1/BatchNorm/moving_mean' in ele.name or 'resnet_v1_50/conv1/BatchNorm/moving_variance' in ele.name:
@@ -141,50 +134,6 @@ class SolverWrapper(object):
                 if 'block4' in ele.name:
                     saver_t[ele.name[:-2]] = ele
 
-            self.saver_restore = tf.train.Saver(saver_t)
-            self.saver_restore.restore(sess, self.pretrained_model)
-
-            if self.Restore_flag >= 5:
-
-                saver_t = {}
-                # Add block5
-                for ele in tf.model_variables():
-                    if 'block4' in ele.name:
-                        saver_t[ele.name[:-2]] = \
-                            [var for var in tf.model_variables() if
-                             ele.name[:-2].replace('block4', 'block5') in var.name][
-                                0]
-
-                self.saver_restore = tf.train.Saver(saver_t)
-                self.saver_restore.restore(sess, self.pretrained_model)
-
-            if self.Restore_flag >= 6:
-                saver_t = {}
-                # Add block6
-                for ele in tf.model_variables():
-                    if 'block4' in ele.name:
-                        saver_t[ele.name[:-2]] = \
-                            [var for var in tf.model_variables() if
-                             ele.name[:-2].replace('block4', 'block6') in var.name][
-                                0]
-
-                self.saver_restore = tf.train.Saver(saver_t)
-                self.saver_restore.restore(sess, self.pretrained_model)
-
-            if self.Restore_flag >= 7:
-
-                saver_t = {}
-                # Add block7
-                for ele in tf.model_variables():
-                    if 'block4' in ele.name:
-                        saver_t[ele.name[:-2]] = \
-                            [var for var in tf.model_variables() if
-                             ele.name[:-2].replace('block4', 'block7') in var.name][
-                                0]
-
-                self.saver_restore = tf.train.Saver(saver_t)
-                self.saver_restore.restore(sess, self.pretrained_model)
-
     def from_previous_ckpt(self, sess):
         for var in tf.trainable_variables():
             print(var.name, var.eval().mean())
@@ -198,12 +147,11 @@ class SolverWrapper(object):
 
     def train_model(self, sess, max_iters):
         lr, train_op = self.construct_graph(sess)
-
         if cfg.TRAIN_RES_RESTORE:
             self.from_snapshot(sess)
         else:
             sess.run(tf.global_variables_initializer())
-        if cfg.TRAIN_MODULE_CONTINUE == 1:  # continue training
+        if cfg.TRAIN_MODULE_CONTINUE:  # continue training
             self.from_previous_ckpt(sess)
 
         sess.graph.finalize()
@@ -225,7 +173,7 @@ class SolverWrapper(object):
                 iter += 1
                 continue
             blobs['head'] = np.load('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy')
-            loss_cls_H, loss_cls_HO, loss_cls_bi, total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
+            loss_cls_HO, total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
 
             # print('Miss', str(blobs['image_id']))
             # np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
@@ -233,10 +181,9 @@ class SolverWrapper(object):
             timer.toc()
             if iter % cfg.TRAIN.DISPLAY == 0:
                 print('iter: %d / %d, im_id: %u, '
-                      'total loss: %.6f, loss_cls_H: %.6f, loss_cls_HO: %.6f, loss_cls_bi: %.6f'
+                      'total loss: %.6f, loss_cls_HO: %.6f,'
                       'lr: %f, speed: %.3f s/iter' %
-                      (iter, max_iters, self.Trainval_GT[iter % Data_length][0][0],
-                       total_loss, loss_cls_H, loss_cls_HO, loss_cls_bi,
+                      (iter, max_iters, self.Trainval_GT[iter % Data_length][0][0], total_loss, loss_cls_HO,
                        lr.eval(), timer.average_time))
 
             if (iter % cfg.TRAIN.SNAPSHOT_ITERS * 2 == 0 and iter != 0) or (iter == 10):
