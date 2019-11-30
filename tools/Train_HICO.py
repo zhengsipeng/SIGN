@@ -8,8 +8,7 @@ import argparse
 import pickle
 from ult.config import cfg
 from models.train_Solver_HICO import train_net
-from networks.SPGCN_HICO import SPGCN
-from networks.myNetwork import SPGCN_v2
+from networks.SIGAN_HICO import SIGAN
 #os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -24,39 +23,39 @@ def parse_args():
                         default='SPGCN_HICO', type=str)
     parser.add_argument('--Pos_augment', dest='Pos_augment',
                         help='Number of augmented detection for each one. (By jittering the object detections)',
-                        default=10, type=int)
+                        default=30, type=int)
     parser.add_argument('--Neg_select', dest='Neg_select',
                         help='Number of Negative example selected for each image',
-                        default=20, type=int)
+                        default=60, type=int)
     parser.add_argument('--Restore_flag', dest='Restore_flag',
                         help='How many ResNet blocks are there?',
                         default=5, type=int)
-    parser.add_argument('--num_fc', dest='num_fc',
-                        help='Number of FC2',
-                        default=1024, type=int)
-    parser.add_argument('--version', dest='version',
-                        help='latefusion type',
-                        default='v1', type=str)
-    parser.add_argument('--posemap', dest='posemap',
+    parser.add_argument('--skebox', dest='use_skebox',
+                        help='use_skebox or not',
+                        action='store_true', default=False)
+    parser.add_argument('--bp', dest='use_bodypart',
+                        help='use_bodypart or not',
+                        action='store_true', default=False)
+    parser.add_argument('--pm', dest='use_posemap',
                         help='use posemap or not',
                         action='store_true', default=False)
-    parser.add_argument('--semantic', dest='semantic',
-                        help='use semantic or not',
-                        action='store_true', default=False)
-    parser.add_argument('--posegraph', dest='posegraph',
+    parser.add_argument('--sg', dest='use_sg',
                         help='use posegraph or not',
                         action='store_true', default=False)
-    parser.add_argument('--bi_posegraph', dest='bi_posegraph',
-                        help='use bi_posegraph or not',
+    parser.add_argument('--sg_att', dest='use_sg_att',
+                        help='use Spatial posegraph or not',
                         action='store_true', default=False)
-    parser.add_argument('--binary', dest='binary',
+    parser.add_argument('--ag', dest='use_ag',
+                        help='use Appearance posegraph or not',
+                        action='store_true', default=False)
+    parser.add_argument('--ag_att', dest='use_ag_att',
+                        help='use posegraph or not',
+                        action='store_true', default=False)
+    parser.add_argument('--bi', dest='use_binary',
                         help='use binary or not',
                         action='store_true', default=False)
     parser.add_argument('--tmp', dest='tmp',
                         help='use tmp or not',
-                        action='store_true', default=False)
-    parser.add_argument('--bodypart', dest='bodypart',
-                        help='use bodypart or not',
                         action='store_true', default=False)
     args = parser.parse_args()
     return args

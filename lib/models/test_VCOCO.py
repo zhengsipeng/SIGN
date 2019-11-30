@@ -1,14 +1,11 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
-from ult.config import cfg
-from ult.timer import Timer
-from ult.ult import Get_next_sp_with_pose
-from ult.ult import Get_next_sp_with_posemap
-from ult.ult import get_sgraph_in, sgraph_in_norm
-from ult.ult import get_union, generate_skebox, generate_bodypart
-from ult.apply_prior import apply_prior
+from utils.config import cfg
+from utils.datatools import Get_next_sp_with_pose, Get_next_sp_with_posemap
+from utils.datatools import get_sgraph_in, sgraph_in_norm
+from utils.datatools import get_union, generate_skebox, generate_bodypart, Timer
+from utils.apply_prior import apply_prior
 import copy
 import cv2
 import pickle

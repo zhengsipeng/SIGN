@@ -1,13 +1,12 @@
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-from ult.config import cfg
+from utils.config import cfg
 from Graph_builder import Graph
 from tensorflow.python.framework import ops
 from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_utils
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
-from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
 
 
 def resnet_arg_scope(is_training=True, batch_norm_decay=0.997, batch_norm_epsilon=1e-5, batch_norm_scale=True):
@@ -74,9 +73,9 @@ class SIGAN():
         self.num_binary = 1  # existence of HOI (0 or 1)
         self.num_classes = 29
         self.is_training = is_training
-        self.keep_prob = 0.5 if self.is_training else 1
+        #self.keep_prob = cfg.TRAIN_DROP_OUT_BINARY if self.is_training else 1
+        self.keep_prob = 1 if self.is_training else 1
         self.sp_in_len = 3 if use_pm else 2
-
         # Training data feed
         self.image = tf.placeholder(tf.float32, shape=[1, None, None, 3], name='image')
         self.head = tf.placeholder(tf.float32, shape=[1, None, None, 1024], name='head')  # extract head directly
@@ -90,7 +89,7 @@ class SIGAN():
 
         # ResNet backbone
         self.scope = 'resnet_v1_50'
-        self.num_fc = 1024
+        self.num_fc = 2048
         self.stride = [16, ]
         if tf.__version__ == '1.1.0':
             self.blocks = [resnet_utils.Block('block1', resnet_v1.bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
@@ -100,7 +99,7 @@ class SIGAN():
                            resnet_utils.Block('block5', resnet_v1.bottleneck, [(2048, 512, 1)] * 3)]
         else:
             from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
-            self.blocks = [resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
+        self.blocks = [resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
                            resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
                            resnet_v1_block('block3', base_depth=256, num_units=6, stride=1),
                            resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
@@ -414,6 +413,10 @@ class SIGAN():
         if self.use_u:
             pool_U = self.crop_pool_layer(head, self.U_boxes, 'Crop_U', cfg.POOLING_SIZE)
             fc_U = self.res5(pool_U, is_training, True)
+            fc1_U = slim.fully_connected(fc_U, self.num_fc, scope='fc1_U')
+            fc1_U = slim.dropout(fc1_U, keep_prob=self.keep_prob, scope='drop1_U')
+            fc2_U = slim.fully_connected(fc1_U, self.num_fc, scope='fc2_U')
+            fc_U = slim.dropout(fc2_U, keep_prob=self.keep_prob, scope='drop2_U')
             self.predictions['fc_U'] = fc_U
         # whether use spatial GCN
         if self.use_sg:
@@ -465,7 +468,18 @@ class SIGAN():
             pm_fc = slim.dropout(pm_fc, keep_prob=self.keep_prob, is_training=is_training, scope='dropout_pm')
             self.predictions['pm_out'] = pm_fc
         '''
+        fc1_H = slim.fully_connected(fc_H, self.num_fc, scope='fc1_H')
+        fc1_H = slim.dropout(fc1_H, keep_prob=self.keep_prob, scope='drop1_H')
+        fc2_H = slim.fully_connected(fc1_H, self.num_fc, scope='fc2_H')
+        fc_H = slim.dropout(fc2_H, keep_prob=self.keep_prob, scope='drop2_H')
+
+        fc1_O = slim.fully_connected(fc_O, self.num_fc, scope='fc1_O')
+        fc1_O = slim.dropout(fc1_O, keep_prob=self.keep_prob, scope='drop1_O')
+        fc2_O = slim.fully_connected(fc1_O, self.num_fc, scope='fc2_O')
+        fc_O = slim.dropout(fc2_O, keep_prob=self.keep_prob, scope='drop2_O')
+
         fc_HOsp = tf.concat([fc_H, fc_O, sp], 1)
+
         self.region_classification(fc_HOsp, is_training, initializer, 'classification')
 
         if self.use_binary:
@@ -500,7 +514,7 @@ class SIGAN():
 
             HO_mask = self.Mask_HO
             HO_cross_entropy = tf.reduce_mean(
-                tf.multiply(tf.nn.sigmoid_cross_entropy_with_logits(labels=label_HO, logits=cls_score[:self.H_num]),
+                tf.multiply(tf.nn.sigmoid_cross_entropy_with_logits(labels=label_HO, logits=cls_score),
                             HO_mask))
             self.losses['HO_cross_entropy'] = HO_cross_entropy
             loss = HO_cross_entropy

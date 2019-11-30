@@ -2,10 +2,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from ult.config import cfg
-from ult.ult import Get_Next_Instance_HO_Neg_HICO, Get_Next_Instance_HO_Neg_HICO_v2
-from ult.timer import Timer
-
+from utils.config import cfg
+from utils.data_loader import Get_Next_Instance_HO_Neg_HICO, Get_Next_Instance_HO_Neg_HICO_v2, Timer
 import os
 import pickle as pkl
 import tensorflow as tf

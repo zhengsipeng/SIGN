@@ -14,10 +14,9 @@ import json
 import argparse
 import pickle
 import os
-
-from ult.vsrl_eval import VCOCOeval
 from networks.SIGAN_VCOCO import SIGAN
-from ult.config import cfg
+from utils.vsrl_eval import VCOCOeval
+from utils.config import cfg
 from models.test_VCOCO import test_net
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -76,7 +75,6 @@ if __name__ == '__main__':
     print('Use A graph: ' + str(args.use_ag))
     print('Use A graph att: ' + str(args.use_ag_att))
     print('Use binary: ' + str(args.use_binary))
-
     net = SIGAN(use_skebox=args.use_skebox, use_bodypart=args.use_bodypart,
                 use_pm=args.use_pm, use_u=args.use_u,
                 use_sg=args.use_sg, use_sg_att=args.use_sg_att,

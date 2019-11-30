@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 import os
-import _init_paths
+import tools._init_paths
 import numpy as np
 import argparse
 import pickle

@@ -6,7 +6,7 @@ import _init_paths
 import numpy as np
 import argparse
 import pickle
-from ult.config import cfg
+from utils.config import cfg
 from models.train_Solver_VCOCO import train_net
 from networks.SIGAN_VCOCO import SIGAN
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -60,13 +60,11 @@ if __name__ == '__main__':
     print('Use A graph: ' + str(args.use_ag))
     print('Use A graph att: ' + str(args.use_ag_att))
     print('Use binary: ' + str(args.use_binary))
-
     net = SIGAN(use_skebox=args.use_skebox, use_bodypart=args.use_bodypart,
                 use_pm=args.use_pm, use_u=args.use_u,
                 use_sg=args.use_sg, use_sg_att=args.use_sg_att,
                 use_ag=args.use_ag, use_ag_att=args.use_ag_att,
                 use_binary=args.use_binary)
-
     train_net(net, Trainval_GT, Trainval_N, output_dir, weight,
               args.Pos_augment, args.Neg_select, args.Restore_flag,
               args.use_pm, max_iters=args.max_iters)

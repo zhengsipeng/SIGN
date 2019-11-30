@@ -2,10 +2,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from ult.config import cfg
-from ult.timer import Timer
-from ult.ult import Get_next_sp_with_pose, Get_next_sp_with_posemap, Get_next_semantic, get_pose_nodes, gnodes_norm
-
+from utils.config import cfg
+from utils.datatools import Get_next_sp_with_pose, Get_next_sp_with_posemap
+from utils.datatools import Timer, Get_next_semantic, get_pose_nodes, gnodes_norm
 import cv2
 import pickle
 import numpy as np

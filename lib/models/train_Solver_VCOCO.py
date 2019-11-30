@@ -1,14 +1,12 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
-from ult.config import cfg
-from ult.timer import Timer
-from ult.ult import Get_Next_Instance_VCOCO
-
+from utils.config import cfg
+from utils.datatools import Timer
+from utils.data_loader import Get_Next_Instance_VCOCO
 import os
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
 
 class SolverWrapper(object):
@@ -74,7 +72,7 @@ class SolverWrapper(object):
             else:
                 global_step = tf.Variable(0, trainable=False)
 
-            # lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
+            #lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
             #                                staircase=True)
             lr = tf.train.piecewise_constant(global_step, boundaries=[24000, 48000], values=[0.04, 0.004, 0.00004])
 
@@ -133,6 +131,17 @@ class SolverWrapper(object):
             for ele in tf.model_variables():
                 if 'block4' in ele.name:
                     saver_t[ele.name[:-2]] = ele
+
+            if self.Restore_flag > 5:
+                saver_t = {}
+                # Add block5
+                for ele in tf.model_variables():
+                    if 'block4' in ele.name:
+                        saver_t[ele.name[:-2]] = \
+                        [var for var in tf.model_variables() if ele.name[:-2].replace('block4', 'block5') in var.name][
+                            0]
+                self.saver_restore = tf.train.Saver(saver_t)
+                self.saver_restore.restore(sess, self.pretrained_model)
 
     def from_previous_ckpt(self, sess):
         for var in tf.trainable_variables():
