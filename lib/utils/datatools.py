@@ -124,50 +124,6 @@ def bbox_trans(human_box_ori, object_box_ori, ratio, size=64):
     return np.round(human_box), np.round(object_box)
 
 
-def Get_next_sp(human_box, object_box):
-    InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
-                          max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
-    height = InteractionPattern[3] - InteractionPattern[1] + 1
-    width = InteractionPattern[2] - InteractionPattern[0] + 1
-    if height > width:
-        H, O = bbox_trans(human_box, object_box, 'height')
-    else:
-        H, O = bbox_trans(human_box, object_box, 'width')
-
-    Pattern = np.zeros((64, 64, 2))
-    Pattern[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 1
-    Pattern[int(O[1]):int(O[3]) + 1, int(O[0]):int(O[2]) + 1, 1] = 1
-
-    return Pattern
-
-
-def Get_next_semantic(clsid, clsid2cls, objs_bert):
-    clsname = clsid2cls[clsid]
-    semantic = objs_bert[clsname]
-    semantic = np.asarray(semantic).reshape(-1, 1024)
-    return semantic
-
-
-def Get_next_sp_with_pose(human_box, object_box, human_pose, objscore):
-    InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
-                          max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
-    height = InteractionPattern[3] - InteractionPattern[1] + 1
-    width = InteractionPattern[2] - InteractionPattern[0] + 1
-    if height > width:
-        H, O = bbox_trans(human_box, object_box, 'height')
-    else:
-        H, O = bbox_trans(human_box, object_box, 'width')
-    Pattern = np.zeros((64, 64, 2))
-    Pattern[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 1
-    Pattern[int(O[1]):int(O[3]) + 1, int(O[0]):int(O[2]) + 1, 1] = 1
-
-    Pose_nodes = human_pose
-    Pose_nodes += [object_box[0], object_box[1], float(objscore), object_box[2], object_box[3], float(objscore)]
-    len_nodes = len(Pose_nodes)
-    Pose_nodes = np.asarray(Pose_nodes).reshape(-1, len_nodes)
-    return Pattern, Pose_nodes
-
-
 def bb_IOU(boxA, boxB):
     ixmin = np.maximum(boxA[0], boxB[0])
     iymin = np.maximum(boxA[1], boxB[1])
@@ -237,20 +193,6 @@ def Generate_action_HICO(action_list):
         action_[GT_idx] = 1
     action_ = action_.reshape(1, 600)
     return action_
-
-
-def get_sgraph_in(pose_nodes, Human, pose_none_flag):
-    if pose_nodes is None:  # the human pose is None
-        centric_x = (Human[0] + Human[2]) / 2.
-        centric_y = (Human[1] + Human[3]) / 2.
-        sgraph_in = []
-        for i in range(17):
-            sgraph_in += [centric_x, centric_y, 1]
-        pose_none_flag = 0
-    else:
-        sgraph_in = pose_nodes
-
-    return sgraph_in, pose_none_flag
 
 
 def sgraph_in_norm(Pose_nodes, Human, pose_norm):
@@ -334,31 +276,6 @@ def get_skeleton(human_box, human_pose, human_pattern, num_joints = 17, size = 6
     joints[num_joints] = (joints[5] + joints[6]) / 2
 
     return draw_relation(human_pattern, joints)
-
-
-def Get_next_sp_with_posemap(human_box, object_box, human_pose, num_joints=17):
-    InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
-                          max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
-    height = InteractionPattern[3] - InteractionPattern[1] + 1
-    width = InteractionPattern[2] - InteractionPattern[0] + 1
-    if height > width:
-        H, O = bbox_trans(human_box, object_box, 'height')
-    else:
-        H, O = bbox_trans(human_box, object_box, 'width')
-
-    Pattern = np.zeros((64, 64, 2), dtype='float32')
-    Pattern[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 1
-    Pattern[int(O[1]):int(O[3]) + 1, int(O[0]):int(O[2]) + 1, 1] = 1
-
-    if human_pose != None and len(human_pose) == 51:
-        skeleton = get_skeleton(human_box, human_pose, H, num_joints)
-    else:
-        skeleton = np.zeros((64, 64, 1), dtype='float32')
-        skeleton[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 0.05
-
-    Pattern = np.concatenate((Pattern, skeleton), axis=2)
-
-    return Pattern
 
 
 def generate_skebox(pose, Human, shape):
@@ -449,13 +366,77 @@ def get_union(boxA, boxB):
 
     return np.asarray([0, x1, y1, x2, y2]).reshape([-1, 5])
 
-'''
-def _getRelativeLoc(self, aBB, bBB):
-    sx1, sy1, sx2, sy2 = aBB.astype(np.float32)
-    ox1, oy1, ox2, oy2 = bBB.astype(np.float32)
+
+def get_sgraph_in(pose_nodes, Human, pose_none_flag):
+    if pose_nodes is None:  # the human pose is None
+        centric_x = (Human[0] + Human[2]) / 2.
+        centric_y = (Human[1] + Human[3]) / 2.
+        sgraph_in = []
+        for i in range(17):
+            sgraph_in += [centric_x, centric_y, 1]
+        pose_none_flag = 0
+    else:
+        sgraph_in = pose_nodes
+
+    return sgraph_in, pose_none_flag
+
+
+def Get_next_semantic(clsid, clsid2cls, objs_bert):
+    clsname = clsid2cls[clsid]
+    semantic = objs_bert[clsname]
+    semantic = np.asarray(semantic).reshape(-1, 1024)
+    return semantic
+
+
+def Get_next_sp_coords(human_box, object_box):
+    sx1, sy1, sx2, sy2 = human_box.astype(np.float32)
+    ox1, oy1, ox2, oy2 = object_box.astype(np.float32)
     sw, sh, ow, oh = sx2-sx1, sy2-sy1, ox2-ox1, oy2-oy1
     xy = np.array([(sx1-ox1)/ow, (sy1-oy1)/oh, (ox1-sx1)/sw, (oy1-sy1)/sh])
     wh = np.log(np.array([sw/ow, sh/oh, ow/sw, oh/sh]))
-    return np.hstack((xy, wh))
-'''
+    return np.hstack((xy, wh)).reshape(-1, 8)
+
+
+def Get_next_sp(human_box, object_box):
+    InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
+                          max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
+    height = InteractionPattern[3] - InteractionPattern[1] + 1
+    width = InteractionPattern[2] - InteractionPattern[0] + 1
+    if height > width:
+        H, O = bbox_trans(human_box, object_box, 'height')
+    else:
+        H, O = bbox_trans(human_box, object_box, 'width')
+
+    Pattern = np.zeros((64, 64, 2))
+    Pattern[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 1
+    Pattern[int(O[1]):int(O[3]) + 1, int(O[0]):int(O[2]) + 1, 1] = 1
+
+    return Pattern
+
+
+def Get_next_sp_with_posemap(human_box, object_box, human_pose, num_joints=17):
+    InteractionPattern = [min(human_box[0], object_box[0]), min(human_box[1], object_box[1]),
+                          max(human_box[2], object_box[2]), max(human_box[3], object_box[3])]
+    height = InteractionPattern[3] - InteractionPattern[1] + 1
+    width = InteractionPattern[2] - InteractionPattern[0] + 1
+    if height > width:
+        H, O = bbox_trans(human_box, object_box, 'height')
+    else:
+        H, O = bbox_trans(human_box, object_box, 'width')
+
+    Pattern = np.zeros((64, 64, 2), dtype='float32')
+    Pattern[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 1
+    Pattern[int(O[1]):int(O[3]) + 1, int(O[0]):int(O[2]) + 1, 1] = 1
+
+    if human_pose is not None and len(human_pose) == 51:
+        skeleton = get_skeleton(human_box, human_pose, H, num_joints)
+    else:
+        skeleton = np.zeros((64, 64, 1), dtype='float32')
+        skeleton[int(H[1]):int(H[3]) + 1, int(H[0]):int(H[2]) + 1, 0] = 0.05
+
+    Pattern = np.concatenate((Pattern, skeleton), axis=2)
+    return Pattern
+
+
+
 

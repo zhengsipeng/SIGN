@@ -3,14 +3,15 @@ from __future__ import division
 from __future__ import print_function
 
 from utils.config import cfg
-from utils.datatools import Get_next_sp_with_pose, Get_next_sp_with_posemap
-from utils.datatools import Timer, Get_next_semantic, get_pose_nodes, gnodes_norm
+from utils.datatools import Get_next_sp_with_posemap
+from utils.datatools import Get_next_semantic
+from utils.datatools import get_sgraph_in, sgraph_in_norm
+from utils.datatools import get_union, generate_skebox, generate_bodypart, Timer
 import cv2
 import pickle
 import numpy as np
 import glob
 import copy
-import tensorflow as tf
 human_num_thres = 4
 object_num_thres = 4
 
@@ -71,82 +72,51 @@ def get_blob(image_id):
     return im_orig, im_shape
 
 
-
-def _bytes_feature(value):
-    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
-
-def _int64_feature(value):
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-
-
-def save_tfrecords(data, desfile):
-    head_feature = data
-    head_H = data.shape[1]
-    head_W = data.shape[2]
-    with tf.python_io.TFRecordWriter(desfile) as writer:
-        features = tf.train.Features(
-            feature={
-                'head': _bytes_feature(head_feature.astype(np.float64).tostring()),
-                'H': _int64_feature(head_H),
-                'W': _int64_feature(head_W)
-            }
-        )
-        example = tf.train.Example(features=features)
-        serialized = example.SerializeToString()
-        writer.write(serialized)
-
-
-def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detection, posetype):
-    # save image information
-    #
+def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detection):
     This_image = []
-
     if int(image_id) in all_remaining:
         return 0
 
     im_orig, im_shape = get_blob(image_id)
     objs_bert = pickle.load(open(cfg.DATA_DIR + '/' + 'objs_bert1024.pkl', 'rb'))
-    c = 2 if posetype == 1 else 3
     blobs = dict()
     blobs['H_num'] = 1
     blobs['head'] = np.load('Temp/test/'+str(image_id)+'.npy')
 
     Hnum = 0
-    H_boxes = []
-    O_boxes = []
-    Gnodes = []
-    sp = []
-    semantics = []
+    H_boxes, O_boxes, U_boxes = np.zeros([0, 5]), np.zeros([0, 5]), np.zeros([0, 5])
+    spatial = np.zeros([0, 64, 64, 3])
+    SGinput = np.zeros([0, 51 + 6])
+    skeboxes = np.zeros([0, 17, 5])
+    bodyparts = np.zeros([0, 6, 5])
 
+    semantics = np.zeros([0, 1024])
     obj_class, hscore, oscore = [], [], []
 
     for Human_out in Test_RCNN[image_id]:
         if (np.max(Human_out[5]) > human_thres) and (Human_out[1] == 'Human'):  # This is a valid human
-
-            hbox = np.array(
-                [0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
-
+            H_box = np.array([0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
             for Object in Test_RCNN[image_id]:
                 if (np.max(Object[5] > object_thres)) and not (np.all(Object[2] == Human_out[2])):  # valid object
                     Hnum += 1
-                    obox = np.array([0, Object[2][0], Object[2][1],
-                                                 Object[2][2], Object[2][3]]).reshape(1, 5)
-                    human_pose = copy.deepcopy(Human_out[6])
-                    Pose_nodes, pose_none_flag = get_pose_nodes(human_pose, Human_out[2], 1, im_shape)
-                    Pattern, gnode = Get_next_sp_with_pose(Human_out[2], Object[2], Pose_nodes,
-                                                                     im_shape, Object[5])
-                    norm_gnode = [gnodes_norm(gnode[0], Human_out[2], cfg.POSENORM)]
-                    if posetype == 2:
-                        Pattern = Get_next_sp_with_posemap(Human_out[2], Object[2], human_pose, num_joints=17)
+                    O_box = np.array([0, Object[2][0], Object[2][1], Object[2][2], Object[2][3]]).reshape(1, 5)
+                    U_box = get_union(H_box[0], O_box[0])
+                    posenodes, pose_none_flag = get_sgraph_in(copy.deepcopy(Human_out[6]), Human_out[2], 1)
+                    sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
+                    norm_gnode = sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM).reshape([1, 51 + 6])
+                    spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
                     semantic = Get_next_semantic(Object[4], clsid2cls, objs_bert)
-                    spatial = Pattern.reshape(1, 64, 64, c)
 
-                    H_boxes.append(hbox)
-                    O_boxes.append(obox)
-                    Gnodes.append(norm_gnode)
-                    sp.append(spatial)
-                    semantics.append(semantic)
+                    H_boxes = np.concatenate([H_boxes, H_box], axis=0)
+                    O_boxes = np.concatenate([O_boxes, O_box], axis=0)
+                    U_boxes = np.concatenate([U_boxes, U_box], axis=0)
+                    SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
+                    spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
+                    skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
+                                                                         Human_out[2], im_shape)], axis=0)
+                    bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
+                                                                             Human_out[2], im_shape)], axis=0)
+                    semantics = np.concatenate([semantics, semantic], axis=0)
                     obj_class.append(Object[4])
                     hscore.append(Human_out[5])
                     oscore.append(Object[5])
@@ -188,50 +158,37 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
         for Human_out in Human_out_list:
             for Object in Object_list:
                 Hnum += 1
-                hbox = np.array(
-                    [0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
-                obox = np.array([0, Object[2][0], Object[2][1],
-                                             Object[2][2], Object[2][3]]).reshape(1, 5)
-                human_pose = copy.deepcopy(Human_out[6])
-                Pose_nodes, pose_none_flag = get_pose_nodes(human_pose, Human_out[2], 1, im_shape)
-                Pattern, gnode = Get_next_sp_with_pose(Human_out[2], Object[2], Pose_nodes, im_shape, Object[5])
-                norm_gnode = [gnodes_norm(gnode[0], Human_out[2], cfg.POSENORM)]
-                if posetype == 2:
-                    Pattern = Get_next_sp_with_posemap(Human_out[2], Object[2], human_pose, num_joints=17)
+                H_box = np.array([0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
+                O_box = np.array([0, Object[2][0], Object[2][1], Object[2][2], Object[2][3]]).reshape(1, 5)
+                U_box = get_union(H_box[0], O_box[0])
+                posenodes, pose_none_flag = get_sgraph_in(copy.deepcopy(Human_out[6]), Human_out[2], 1)
+                sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
+                norm_gnode = np.asarray(sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM)).reshape([1, 51 + 6])
+                spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
                 semantic = Get_next_semantic(Object[4], clsid2cls, objs_bert)
-                spatial = Pattern.reshape(1, 64, 64, c)
 
-                H_boxes.append(hbox)
-                O_boxes.append(obox)
-                Gnodes.append(norm_gnode)
-                sp.append(spatial)
-                semantics.append(semantic)
+                SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
+                H_boxes = np.concatenate([H_boxes, H_box], axis=0)
+                O_boxes = np.concatenate([O_boxes, O_box], axis=0)
+                U_boxes = np.concatenate([U_boxes, U_box], axis=0)
+                spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
+                skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
+                                                                     Human_out[2], im_shape)], axis=0)
+                bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
+                                                                         Human_out[2], im_shape)], axis=0)
+                semantics = np.concatenate([semantics, semantic], axis=0)
                 obj_class.append(Object[4])
                 hscore.append(Human_out[5])
                 oscore.append(Object[5])
-    '''
-    for i in range(Hnum):
-        blobs['H_boxes'] = copy.deepcopy(H_boxes[i])
-        blobs['O_boxes'] = copy.deepcopy(O_boxes[i])
-        blobs['sp'] = copy.deepcopy(sp[i])
-        blobs['semantic'] = copy.deepcopy(semantics[i])
-        blobs['Gnodes'] = copy.deepcopy(Gnodes[i])
 
-        prediction_HO = net.test_image_HO(sess, im_orig, blobs)
-        temp = list()
-        temp.append(H_boxes[i][0][1:])
-        temp.append(O_boxes[i][0][1:])  # Object box
-        temp.append(obj_class[i])  # Object Class:
-        temp.append(prediction_HO[0][0])  # binary score
-        temp.append(hscore[i])  # Human score
-        temp.append(oscore[i])  # Object score
-        This_image.append(temp)
-    '''
-    H_boxes = np.asarray(H_boxes).reshape([-1, 5])
-    O_boxes = np.asarray(O_boxes).reshape([-1, 5])
-    sp = np.asarray(sp).reshape([-1, 64, 64, c])
-    semantics = np.asarray(semantics).reshape([-1, 1024])
-    Gnodes = np.asarray(Gnodes).reshape([-1, (17+2)*3])
+    H_boxes = H_boxes.reshape([-1, 5])
+    O_boxes = O_boxes.reshape([-1, 5])
+    U_boxes = U_boxes.reshape([-1, 5])
+    spatial = spatial.reshape([-1, 64, 64, 3])
+    SGinput = SGinput.reshape([-1, (17+2)*3])
+    skeboxes = skeboxes.reshape([-1, 17, 5])
+    bodyparts = bodyparts.reshape(-1, 6, 5)
+    semantics = semantics.reshape([-1, 1024])
     if Hnum != 0:
         divide = int(Hnum / 300) + 1
         for i in range(divide):
@@ -241,8 +198,9 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
             if num == 0:
                 continue
             blobs = {'H_num': num,
-                     'H_boxes': H_boxes[start: end], 'O_boxes': O_boxes[start: end],
-                     'sp': sp[start: end], 'semantic': semantics[start: end], 'Gnodes': Gnodes[start: end],
+                     'H_boxes': H_boxes[start: end], 'O_boxes': O_boxes[start: end], 'U_boxes': U_boxes[start: end],
+                     'skeboxes': skeboxes[start: end], 'bodyparts': bodyparts[start: end],
+                     'sp': spatial[start: end], 'semantic': semantics[start: end], 'SGinput': SGinput[start: end],
                      'head': np.load('Temp/test/' + str(image_id) + '.npy')}
             prediction_HO = net.test_image_HO(sess, im_orig, blobs)
             for j in range(num):
@@ -254,12 +212,10 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
     return len(This_image)
 
 
-def test_net(sess, net, Test_RCNN, output_dir, object_thres, human_thres, posetype):
+def test_net(sess, net, Test_RCNN, output_dir, object_thres, human_thres):
     np.random.seed(cfg.RNG_SEED)
     detection = {}
     count = 0
-    print(output_dir)
-    # times
     _t = {'im_detect': Timer(), 'misc': Timer()}
     total_num = 0
     imagekeys = Test_RCNN.keys()
@@ -268,10 +224,9 @@ def test_net(sess, net, Test_RCNN, output_dir, object_thres, human_thres, posety
         image_id = int(line[-9: -4])
         if image_id not in imagekeys:
             continue
-        pair_num = im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detection, posetype)
+        pair_num = im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detection)
         total_num += pair_num
         print('im_detect: {:d}/{:d} pair_num {:d}/total_num {:d}, {:.3f}s'.format(
             count + 1, 9658, pair_num, total_num, _t['im_detect'].average_time))
-
         count += 1
     pickle.dump(detection, open(output_dir, 'wb'))

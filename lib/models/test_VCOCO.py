@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from utils.config import cfg
-from utils.datatools import Get_next_sp_with_pose, Get_next_sp_with_posemap
+from utils.datatools import Get_next_sp_with_posemap
 from utils.datatools import get_sgraph_in, sgraph_in_norm
 from utils.datatools import get_union, generate_skebox, generate_bodypart, Timer
 from utils.apply_prior import apply_prior
@@ -23,7 +23,7 @@ def get_blob(image_id):
 
 
 def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
-              object_thres, human_thres, prior_flag, detection, use_pm):
+              object_thres, human_thres, prior_flag, detection):
     im_orig, im_shape = get_blob(image_id)
 
     blobs = {}
@@ -56,10 +56,9 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
             dic['person_box'] = Human_out[2]
             dic['H_det'] = np.max(Human_out[5])
 
-            c = 3 if use_pm else 2
             H_num = 0
             H_boxes, O_boxes, U_boxes = np.zeros([0, 5]), np.zeros([0, 5]), np.zeros([0, 5])
-            spatial = np.zeros([0, 64, 64, c])
+            spatial = np.zeros([0, 64, 64, 3])
             SGinput = np.zeros([0, 51+6])
             skeboxes = np.zeros([0, 17, 5])
             bodyparts = np.zeros([0, 6, 5])
@@ -69,16 +68,15 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
                     O_box = np.array([0, Object[2][0], Object[2][1], Object[2][2], Object[2][3]]).reshape(1, 5)
                     U_box = get_union(H_box[0], O_box[0])
                     posenodes, pose_none_flag = get_sgraph_in(copy.deepcopy(Human_out[6]), Human_out[2], 1)
-                    spatial_, sgraph_in = Get_next_sp_with_pose(Human_out[2], Object[2], posenodes, Object[5])
-                    norm_gnode = sgraph_in_norm(sgraph_in[0], Human_out[2], cfg.POSENORM).reshape([1, 51+6])
-                    if use_pm:
-                        spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2],
-                                                            copy.deepcopy(Human_out[6]), num_joints=17)
-                    SGinput = np.concatenate([SGinput, norm_gnode])
+                    sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
+                    norm_gnode = np.asarray(sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM)).reshape([1, 51+6])
+                    spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
+
+                    SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
                     H_boxes = np.concatenate([H_boxes, H_box], axis=0)
                     O_boxes = np.concatenate([O_boxes, O_box], axis=0)
                     U_boxes = np.concatenate([U_boxes, U_box], axis=0)
-                    spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, -1)], axis=0)
+                    spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
                     skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
                                                                            Human_out[2], im_shape)], axis=0)
                     bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
@@ -215,8 +213,7 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
             detection.append(dic)
 
 
-def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir,
-             object_thres, human_thres, prior_flag, use_pm):
+def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir, object_thres, human_thres, prior_flag):
     np.random.seed(cfg.RNG_SEED)
     detection = []
     count = 0
@@ -224,8 +221,8 @@ def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir,
     for line in open(cfg.DATA_DIR + '/' + '/v-coco/data/splits/vcoco_test.ids', 'r'):
         _t['im_detect'].tic()
         image_id = int(line.rstrip())
-        im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object_thres, human_thres, prior_flag,
-                  detection, use_pm)
+        im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv, object_thres, human_thres,
+                  prior_flag, detection)
         _t['im_detect'].toc()
         print('im_detect: {:d}/{:d} {:.3f}s'.format(count + 1, 4946, _t['im_detect'].average_time))
         count += 1

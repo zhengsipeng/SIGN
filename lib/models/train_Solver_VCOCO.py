@@ -14,8 +14,7 @@ class SolverWrapper(object):
     A wrapper class for the interactive training process
     """
 
-    def __init__(self, network, Trainval_GT, Trainval_N, output_dir,
-                 Pos_augment, Neg_select, Restore_flag, pretrained_model, use_pm):
+    def __init__(self, network, Trainval_GT, Trainval_N, output_dir, Pos_augment, Neg_select, Restore_flag, pretrained_model):
         self.net = network
         self.interval_divide = 5
         self.Trainval_GT = self.changeForm(Trainval_GT, self.interval_divide)
@@ -25,7 +24,6 @@ class SolverWrapper(object):
         self.Neg_select = Neg_select
         self.Restore_flag = Restore_flag
         self.pretrained_model = pretrained_model
-        self.use_pm = use_pm
 
     def snapshot(self, sess, iter):
         if not os.path.exists(self.output_dir):
@@ -176,14 +174,13 @@ class SolverWrapper(object):
         while iter < max_iters + 1:
             timer.tic()
             blobs = Get_Next_Instance_VCOCO(self.Trainval_GT, self.Trainval_N, iter, self.Pos_augment,
-                                                  self.Neg_select, Data_length, self.use_pm)
+                                                  self.Neg_select, Data_length)
 
             if not blobs['pose_none_flag']:
                 iter += 1
                 continue
             blobs['head'] = np.load('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy')
             loss_cls_HO, total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
-
             # print('Miss', str(blobs['image_id']))
             # np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
 
@@ -202,7 +199,7 @@ class SolverWrapper(object):
 
 
 def train_net(network, Trainval_GT, Trainval_N, output_dir, pretrained_model, Pos_augment, Neg_select,
-              Restore_flag, use_pm, max_iters=300000):
+              Restore_flag, max_iters=300000):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     tfconfig = tf.ConfigProto(allow_soft_placement=True)
@@ -210,7 +207,7 @@ def train_net(network, Trainval_GT, Trainval_N, output_dir, pretrained_model, Po
 
     with tf.Session(config=tfconfig) as sess:
         sw = SolverWrapper(network, Trainval_GT, Trainval_N, output_dir, Pos_augment, Neg_select,
-                           Restore_flag, pretrained_model, use_pm)
+                           Restore_flag, pretrained_model)
         print('Solving..., Pos augment = ' + str(Pos_augment) + ', Neg augment = ' + str(Neg_select))
         sw.train_model(sess, max_iters)
         print('done solving')

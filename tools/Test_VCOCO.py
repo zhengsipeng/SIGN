@@ -89,7 +89,7 @@ if __name__ == '__main__':
 
     test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_file,
              args.object_thres, args.human_thres,
-             args.prior_flag, args.use_pm)
+             args.prior_flag)
     sess.close()
 
     vcocoeval._do_eval(output_file, ovr_thresh=0.5)

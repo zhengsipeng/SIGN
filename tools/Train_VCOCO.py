@@ -67,4 +67,4 @@ if __name__ == '__main__':
                 use_binary=args.use_binary)
     train_net(net, Trainval_GT, Trainval_N, output_dir, weight,
               args.Pos_augment, args.Neg_select, args.Restore_flag,
-              args.use_pm, max_iters=args.max_iters)
+              max_iters=args.max_iters)

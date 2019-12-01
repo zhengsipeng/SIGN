@@ -33,8 +33,8 @@ __C.TRAIN_INIT_WEIGHT = 1
 # Restore ResNet weights or not (0 or 1)
 __C.TRAIN_RES_RESTORE = 1
 
-# Continue Training or Training from iter 0  1--continue training  2--from iter 0
-__C.TRAIN_MODULE_CONTINUE = 2
+# Continue Training or Training from iter 0  1--continue training  0--from iter 0
+__C.TRAIN_MODULE_CONTINUE = 0
 
 # Initial learning rate
 __C.TRAIN.LEARNING_RATE = 0.0001

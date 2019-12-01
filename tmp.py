@@ -1,6 +1,11 @@
-import tensorflow as tf
+a = [1, 1]
 
-a = tf.constant([[2,2,2],[2,2,2]])
-b = tf.expand_dims(a, 0)
-with tf.Session() as sess:
-    print sess.run(b.shape)
+
+def fun(a):
+    print a
+    return a
+
+
+for i in range(5):
+    print len(a)
+    b = fun(a+a)
