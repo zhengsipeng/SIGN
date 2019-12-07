@@ -195,7 +195,10 @@ def Generate_action_HICO(action_list):
     return action_
 
 
-def sgraph_in_norm(Pose_nodes, Human, pose_norm):
+def sgraph_in_norm(Pose_nodes, Human, Object, pose_norm):
+    num_nodes = len(Pose_nodes) / 3
+    # Pose_nodes = list
+    obj_rela_loc = []
     if pose_norm == 1:
         center_x, center_y = Pose_nodes[0], Pose_nodes[1]
         for i in range(len(Pose_nodes)):
@@ -213,16 +216,31 @@ def sgraph_in_norm(Pose_nodes, Human, pose_norm):
             elif i % 3 == 1:
                 Pose_nodes[i] = (Pose_nodes[i] - center_y) / float(h)
     elif pose_norm == 3:
-        w = Human[2] - Human[0]
-        h = Human[3] - Human[1]
-        center_x, center_y = Pose_nodes[0], Pose_nodes[1]
+        wo = Object[2] - Object[0]
+        ho = Object[3] - Object[1]
         for i in range(len(Pose_nodes)):
             if i % 3 == 0:
-                Pose_nodes[i] = (Pose_nodes[i] - center_x) / w
+                obj_rela_loc.append((Pose_nodes[i] - Object[0]) / float(wo))
+            if i % 3 == 1:
+                obj_rela_loc.append((Pose_nodes[i] - Object[1]) / float(ho))
+
+        w = Human[2] - Human[0]
+        h = Human[3] - Human[1]
+        for i in range(len(Pose_nodes)):
+            if i % 3 == 0:
+                Pose_nodes[i] = (Pose_nodes[i] - Human[0]) / float(w)
             elif i % 3 == 1:
-                Pose_nodes[i] = (Pose_nodes[i] - center_y) / h
+                Pose_nodes[i] = (Pose_nodes[i] - Human[1]) / float(h)
     else:
         raise NotImplementedError
+
+    if len(obj_rela_loc) > 0:
+        obj_rela_loc = np.asarray(obj_rela_loc).reshape(1, -1, 2)
+        Pose_nodes= np.asarray(Pose_nodes).reshape(1, -1, 3)
+        Pose_nodes = np.concatenate([Pose_nodes, obj_rela_loc], axis=2)
+        Pose_nodes = Pose_nodes.reshape(-1).tolist()
+        assert len(Pose_nodes) == num_nodes * 5
+
     return Pose_nodes
 
 

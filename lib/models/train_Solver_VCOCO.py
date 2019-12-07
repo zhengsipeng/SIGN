@@ -6,6 +6,7 @@ from utils.datatools import Timer
 from utils.data_loader import Get_Next_Instance_VCOCO
 import os
 import numpy as np
+import pickle as pkl
 import tensorflow as tf
 
 
@@ -72,7 +73,8 @@ class SolverWrapper(object):
 
             #lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE, global_step, cfg.TRAIN.STEPSIZE, cfg.TRAIN.GAMMA,
             #                                staircase=True)
-            lr = tf.train.piecewise_constant(global_step, boundaries=[24000, 48000], values=[0.04, 0.004, 0.00004])
+            lr = tf.train.piecewise_constant(global_step, boundaries=[24000, 48000, 72000], values=[0.04, 0.004, 0.0004,
+                                                                                                    0.00004])
 
             self.optimizer = tf.train.MomentumOptimizer(lr, cfg.TRAIN.MOMENTUM)
 
@@ -163,6 +165,7 @@ class SolverWrapper(object):
 
         sess.graph.finalize()
 
+        objs_bert = pkl.load(open(cfg.DATA_DIR + '/' + 'objs_bert768.pkl', 'rb'))
         Data_length = len(self.Trainval_GT)
         path_iter = self.pretrained_model.split('.ckpt')[0]
         iter_num = path_iter.split('_')[-1]
@@ -174,15 +177,16 @@ class SolverWrapper(object):
         while iter < max_iters + 1:
             timer.tic()
             blobs = Get_Next_Instance_VCOCO(self.Trainval_GT, self.Trainval_N, iter, self.Pos_augment,
-                                                  self.Neg_select, Data_length)
+                                                  self.Neg_select, Data_length, objs_bert)
 
-            if not blobs['pose_none_flag']:
-                iter += 1
-                continue
+            #if not blobs['pose_none_flag']:
+            #    iter += 1
+            #    continue
+
             blobs['head'] = np.load('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy')
             loss_cls_HO, total_loss = self.net.train_step(sess, blobs, lr.eval(), train_op)
-            # print('Miss', str(blobs['image_id']))
-            # np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
+            if not os.path.exists('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy'):
+                np.save('Temp/vcoco/train/' + str(blobs['image_id']) + '.npy', head)
 
             timer.toc()
             if iter % cfg.TRAIN.DISPLAY == 0:

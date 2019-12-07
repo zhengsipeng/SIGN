@@ -26,8 +26,8 @@ def parse_args():
     parser.add_argument('--num_iteration', dest='iteration', help='Specify which weight to load', default=300000, type=int)
     parser.add_argument('--prior_flag', dest='prior_flag', help='whether use prior_flag or not', default=3, type=int)
     parser.add_argument('--model', dest='model', help='Select model', default='SIGAN_VCOCO', type=str)
-    parser.add_argument('--object_thres', dest='object_thres', help='Object threshold', default=0.6, type=float)
-    parser.add_argument('--human_thres', dest='human_thres', help='Human threshold', default=0.8, type=float)
+    parser.add_argument('--object_thres', dest='object_thres', help='Object threshold', default=0.3, type=float)
+    parser.add_argument('--human_thres', dest='human_thres', help='Human threshold', default=0.6, type=float)
     parser.add_argument('--skebox', dest='use_skebox', help='use_skebox or not', action='store_true', default=False)
     parser.add_argument('--bp', dest='use_bodypart', help='use_bodypart or not', action='store_true', default=False)
     parser.add_argument('--pm', dest='use_pm', help='use posemap or not', action='store_true', default=False)
@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument('--ag', dest='use_ag', help='use Appearance posegraph or not', action='store_true', default=False)
     parser.add_argument('--ag_att', dest='use_ag_att', help='use posegraph or not', action='store_true', default=False)
     parser.add_argument('--bi', dest='use_binary', help='use binary or not', action='store_true', default=False)
+    parser.add_argument('--Hsolo', dest='use_Hsolo', help='use Hsolo or not', action='store_true', default=False)
     parser.add_argument('--tmp', dest='tmp', help='use tmp or not', action='store_true', default=False)
     parser.add_argument('--cuda', dest='cuda', help='cuda device id', default='0', type=str)
     parser.add_argument('--eval', dest='eval', help='use eval or not', action='store_true', default=False)
@@ -75,11 +76,13 @@ if __name__ == '__main__':
     print('Use A graph: ' + str(args.use_ag))
     print('Use A graph att: ' + str(args.use_ag_att))
     print('Use binary: ' + str(args.use_binary))
+    print('Use Hsolo: ' + str(args.use_Hsolo))
+    print('Pose norm:' + str(cfg.POSENORM))
     net = SIGAN(use_skebox=args.use_skebox, use_bodypart=args.use_bodypart,
                 use_pm=args.use_pm, use_u=args.use_u,
                 use_sg=args.use_sg, use_sg_att=args.use_sg_att,
                 use_ag=args.use_ag, use_ag_att=args.use_ag_att,
-                use_binary=args.use_binary,
+                use_binary=args.use_binary, use_Hsolo=args.use_Hsolo,
                 is_training=False)
     net.create_architecture(False)
     saver = tf.train.Saver()

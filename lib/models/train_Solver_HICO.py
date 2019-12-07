@@ -89,7 +89,7 @@ class SolverWrapper(object):
 
             #lr = tf.train.exponential_decay(cfg.TRAIN.LEARNING_RATE * 10, global_step, cfg.TRAIN.STEPSIZE * 5,
             #                                cfg.TRAIN.GAMMA, staircase=True)
-            lr = tf.train.piecewise_constant(global_step, boundaries=[250000], values=[0.04, 0.004])
+            lr = tf.train.piecewise_constant(global_step, boundaries=[250000, 300000], values=[0.04, 0.004, 0.0004])
 
             self.optimizer = tf.train.MomentumOptimizer(lr, cfg.TRAIN.MOMENTUM)
 
@@ -184,7 +184,7 @@ class SolverWrapper(object):
             self.from_previous_ckpt(sess)
 
         sess.graph.finalize()
-        objs_bert = pkl.load(open(cfg.DATA_DIR + '/' + 'objs_bert1024.pkl', 'rb'))
+        objs_bert = pkl.load(open(cfg.DATA_DIR + '/' + 'objs_bert768.pkl', 'rb'))
         Data_length = len(self.Trainval_GT)
         path_iter = self.pretrained_model.split('.ckpt')[0]
         iter_num = path_iter.split('_')[-1]
@@ -196,9 +196,9 @@ class SolverWrapper(object):
         while iter < max_iters + 1:
             timer.tic()
             blobs = Get_Next_Instance_HICO(self.Trainval_GT, self.Trainval_N, iter,
-                                           self.Pos_augment, self.Neg_select, Data_length, clsid2cls, objs_bert)
+                                           self.Pos_augment, self.Neg_select, Data_length, objs_bert)
 
-            blobs['head'] = np.load('Temp/train/' + str(blobs['image_id']) + '.npy')
+            blobs['head'] = np.load('Temp/hico/train/' + str(blobs['image_id']) + '.npy')
             if not blobs['pose_none_flag']:
                 iter += 1
                 continue
@@ -217,7 +217,7 @@ class SolverWrapper(object):
 
 
 def train_net(network, Trainval_GT, Trainval_N, output_dir, pretrained_model, Pos_augment, Neg_select,
-              Restore_flag, max_iters=30000):
+              Restore_flag, max_iters=300000):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 

@@ -86,11 +86,10 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
     Hnum = 0
     H_boxes, O_boxes, U_boxes = np.zeros([0, 5]), np.zeros([0, 5]), np.zeros([0, 5])
     spatial = np.zeros([0, 64, 64, 3])
-    SGinput = np.zeros([0, 51 + 6])
+    SGinput = np.zeros([0, 19*3 + 19*2])
     skeboxes = np.zeros([0, 17, 5])
     bodyparts = np.zeros([0, 6, 5])
-
-    semantics = np.zeros([0, 1024])
+    semantic = np.zeros([0, 768])
     obj_class, hscore, oscore = [], [], []
 
     for Human_out in Test_RCNN[image_id]:
@@ -105,18 +104,19 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
                     sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
                     norm_gnode = sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM).reshape([1, 51 + 6])
                     spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
-                    semantic = Get_next_semantic(Object[4], clsid2cls, objs_bert)
+                    objname = clsid2cls[Object[4]]
+                    semantic_ = np.asarray(objs_bert[objname]).reshape(-1, 768)
 
+                    SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
                     H_boxes = np.concatenate([H_boxes, H_box], axis=0)
                     O_boxes = np.concatenate([O_boxes, O_box], axis=0)
                     U_boxes = np.concatenate([U_boxes, U_box], axis=0)
-                    SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
                     spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
+                    semantic = np.concatenate([semantic, semantic_], axis=0)
                     skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
                                                                          Human_out[2], im_shape)], axis=0)
                     bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
                                                                              Human_out[2], im_shape)], axis=0)
-                    semantics = np.concatenate([semantics, semantic], axis=0)
                     obj_class.append(Object[4])
                     hscore.append(Human_out[5])
                     oscore.append(Object[5])
@@ -165,18 +165,19 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
                 sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
                 norm_gnode = np.asarray(sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM)).reshape([1, 51 + 6])
                 spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
-                semantic = Get_next_semantic(Object[4], clsid2cls, objs_bert)
+                objname = clsid2cls[Object[4]]
+                semantic_ = np.asarray(objs_bert[objname]).reshape(-1, 768)
 
                 SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
                 H_boxes = np.concatenate([H_boxes, H_box], axis=0)
                 O_boxes = np.concatenate([O_boxes, O_box], axis=0)
                 U_boxes = np.concatenate([U_boxes, U_box], axis=0)
                 spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
+                semantic = np.concatenate([semantic, semantic_], axis=0)
                 skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
                                                                      Human_out[2], im_shape)], axis=0)
                 bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
                                                                          Human_out[2], im_shape)], axis=0)
-                semantics = np.concatenate([semantics, semantic], axis=0)
                 obj_class.append(Object[4])
                 hscore.append(Human_out[5])
                 oscore.append(Object[5])
@@ -185,10 +186,10 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
     O_boxes = O_boxes.reshape([-1, 5])
     U_boxes = U_boxes.reshape([-1, 5])
     spatial = spatial.reshape([-1, 64, 64, 3])
-    SGinput = SGinput.reshape([-1, (17+2)*3])
+    SGinput = SGinput.reshape([-1, (17+2)*5])
     skeboxes = skeboxes.reshape([-1, 17, 5])
     bodyparts = bodyparts.reshape(-1, 6, 5)
-    semantics = semantics.reshape([-1, 1024])
+    semantic = semantic.reshape([-1, 768])
     if Hnum != 0:
         divide = int(Hnum / 300) + 1
         for i in range(divide):
@@ -200,7 +201,7 @@ def im_detect(sess, net, image_id, Test_RCNN, object_thres, human_thres, detecti
             blobs = {'H_num': num,
                      'H_boxes': H_boxes[start: end], 'O_boxes': O_boxes[start: end], 'U_boxes': U_boxes[start: end],
                      'skeboxes': skeboxes[start: end], 'bodyparts': bodyparts[start: end],
-                     'sp': spatial[start: end], 'semantic': semantics[start: end], 'SGinput': SGinput[start: end],
+                     'sp': spatial[start: end], 'semantic': semantic[start: end], 'SGinput': SGinput[start: end],
                      'head': np.load('Temp/test/' + str(image_id) + '.npy')}
             prediction_HO = net.test_image_HO(sess, im_orig, blobs)
             for j in range(num):

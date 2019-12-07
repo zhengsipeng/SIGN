@@ -3,10 +3,25 @@ from config import cfg
 from datatools import *
 
 
+classes = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+           'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+           'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
+           'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite',
+           'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle',
+           'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+           'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant',
+           'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cellphone',
+           'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
+           'teddy bear', 'hair drier', 'toothbrush']
+clsid2cls = dict()
+for k in range(len(classes)):
+    clsid2cls[k+1] = classes[k]
+
+
 # =============
 # VCOCO
 # =============
-def Get_Next_Instance_VCOCO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_select, Data_length):
+def Get_Next_Instance_VCOCO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_select, Data_length, objs_bert):
     GT = trainval_GT[iter % Data_length]
     image_id = GT[0][0]
     im_file = cfg.DATA_DIR + '/' + 'v-coco/coco/images/train2014/COCO_train2014_' + (str(image_id)).zfill(12) + '.jpg'
@@ -16,9 +31,9 @@ def Get_Next_Instance_VCOCO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_se
     im_shape = im_orig.shape
     im_orig = im_orig.reshape(1, im_shape[0], im_shape[1], 3)
 
-    sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts,\
+    sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts, semantic, \
     action_HO, action_H, mask_HO, mask_H, gt_binary_label, pose_none_flag = \
-        Augmented_VCOCO(GT, Trainval_Neg, im_shape, Pos_augment, Neg_select)
+        Augmented_VCOCO(GT, Trainval_Neg, im_shape, Pos_augment, Neg_select, objs_bert)
 
     blobs = dict()
     blobs['image'] = im_orig
@@ -29,6 +44,7 @@ def Get_Next_Instance_VCOCO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_se
     blobs['U_boxes'] = Union_augmented
     blobs['SGinput'] = SGinput
     blobs['sp'] = sp_masks
+    blobs['semantic'] = semantic
     blobs['skeboxes'] = skeboxes
     blobs['bodyparts'] = bodyparts
     blobs['gt_class_HO'] = action_HO
@@ -40,7 +56,7 @@ def Get_Next_Instance_VCOCO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_se
     return blobs
 
 
-def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
+def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, objs_bert):
     image_id = GT[0][0]
     GT_count = len(GT)
     aug_all = int(Pos_augment / GT_count)
@@ -48,6 +64,7 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
 
     Human_augmented, Object_augmented, Union_augmented, action_HO, action_H = [], [], [], [], []
     SGinput = []
+    obj_classes = []
     ori_poses = []
     skeboxes = np.zeros([0, 17, 5])
     bodyparts = np.zeros([0, 6, 5])
@@ -84,9 +101,10 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
         sgraph_in, pose_none_flag = get_sgraph_in(GT[i][5], Human, pose_none_flag)  # list with length of 51
         for j in range(length_min):
             ori_poses.append(GT[i][5])
+            obj_classes.append(GT[i][-1])
             Object_nodeA = [Object_augmented_temp[j][1], Object_augmented_temp[j][2], 1]  # left up corner
             Object_nodeB = [Object_augmented_temp[j][3], Object_augmented_temp[j][4], 1]  # right down corner
-            norm_sgraph_in = sgraph_in_norm(sgraph_in + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
+            norm_sgraph_in = sgraph_in_norm(sgraph_in + Object_nodeA + Object_nodeB, Human, Object, cfg.POSENORM)
             SGinput.append(norm_sgraph_in)
             skeboxes = np.concatenate([skeboxes, generate_skebox(GT[i][5], Human, shape)], axis=0)  # [1, 17, 5]
             bodyparts = np.concatenate([bodyparts, generate_bodypart(GT[i][5], Human, shape)], axis=0)
@@ -103,8 +121,9 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
                     (Object_augmented, np.array([0, Neg[3][0], Neg[3][1], Neg[3][2], Neg[3][3]]).reshape(1, 5)), axis=0)
                 Union_augmented = np.concatenate([Union_augmented, get_union(Neg[2], Neg[3])], axis=0)
                 ori_poses.append(Neg[7])
+                obj_classes.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], Neg[3], cfg.POSENORM)
                 SGinput.append(norm_sgraph_in)
                 skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
                 bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
@@ -119,12 +138,20 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
                     (Object_augmented, np.array([0, Neg[3][0], Neg[3][1], Neg[3][2], Neg[3][3]]).reshape(1, 5)), axis=0)
                 Union_augmented = np.concatenate([Union_augmented, get_union(Neg[2], Neg[3])], axis=0)
                 ori_poses.append(Neg[7])
+                obj_classes.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], Neg[3], cfg.POSENORM)
                 SGinput.append(norm_sgraph_in)
                 skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
                 bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
     num_pos_neg = len(Human_augmented)
+
+    # semantic
+    semantic = []
+    for i in obj_classes:
+        objname = clsid2cls[i]
+        semantic.append(objs_bert[objname])
+    semantic = np.asarray(semantic).reshape(-1, 768)
 
     # spatial
     sp_masks = np.empty((0, 64, 64, 3), dtype=np.float32)
@@ -138,13 +165,14 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
         [1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1]).reshape(1, 29)
     mask_H_ = np.asarray(
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]).reshape(1, 29)
-    mask_HO_ = mask_H_  # whether need all 29 categories
+    #mask_H_ = mask_HO_  # whether need all 29 categories
 
     mask_H = mask_H_
     mask_HO = mask_HO_
 
-    for i in range(num_pos - 1):
+    for i in range(num_pos_neg - 1):  # whether num_pos or num_pos_neg
         mask_H = np.concatenate((mask_H, mask_H_), axis=0)
+
     for i in range(num_pos_neg - 1):
         mask_HO = np.concatenate((mask_HO, mask_HO_), axis=0)
     for i in range(num_pos_neg - num_pos):
@@ -163,18 +191,18 @@ def Augmented_VCOCO(GT, Trainval_Neg, shape, Pos_augment, Neg_select):
     action_H = action_H.reshape(num_pos, 29)
 
     mask_HO = mask_HO.reshape(num_pos_neg, 29)
-    mask_H = mask_H.reshape(num_pos, 29)
+    mask_H = mask_H.reshape(num_pos_neg, 29)
 
-    SGinput = np.asarray(SGinput).reshape(num_pos_neg, 51 + 6)
+    SGinput = np.asarray(SGinput).reshape(num_pos_neg, 51 + 6 + 19*2)
     skeboxes = skeboxes.reshape([-1, 17, 5])
     bodyparts = bodyparts.reshape([-1, 6, 5])
     binary_label = np.zeros((num_pos_neg, 1), dtype='int32')
     for i in range(num_pos):
-        binary_label[i] = 1  # pos is at 0
+        binary_label[i] = 1
     for i in range(num_pos + 1, num_pos_neg):
-        binary_label[i] = 0  # neg is at 1
+        binary_label[i] = 0
 
-    return sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts, \
+    return sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts, semantic, \
            action_HO, action_H, mask_HO, mask_H, binary_label, pose_none_flag
 
 
@@ -193,26 +221,29 @@ def Get_Next_Instance_HICO(trainval_GT, Trainval_Neg, iter, Pos_augment, Neg_sel
     im_orig = im_orig.reshape(1, im_shape[0], im_shape[1], 3)  # 1, H, W, 3
 
     blobs = dict()
-    sp_masks, SGinput, semantic, Human_augmented, Object_augmented, skeboxes, bodyparts, \
+    sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts, semantic, \
     action_HO, num_pos, gt_binary_label, pose_none_flag = \
-            Augmented_HICO(GT, Trainval_Neg, im_shape, Pos_augment, Neg_select, clsid2cls, objs_bert)
+            Augmented_HICO(GT, Trainval_Neg, im_shape, Pos_augment, Neg_select, objs_bert)
 
     blobs['image'] = im_orig
     blobs['image_id'] = image_id
+    blobs['H_num'] = num_pos
     blobs['semantic'] = semantic
     blobs['H_boxes'] = Human_augmented
     blobs['O_boxes'] = Object_augmented
+    blobs['U_boxes'] = Union_augmented
+    blobs['SGinput'] = SGinput
     blobs['sp'] = sp_masks
+    blobs['semantic'] = semantic
     blobs['skeboxes'] = skeboxes
-    blobs['Gnodes'] = SGinput
-    blobs['H_num'] = num_pos
+    blobs['bodyparts'] = bodyparts
     blobs['gt_class_HO'] = action_HO
     blobs['gt_binary_label'] = gt_binary_label
     blobs['pose_none_flag'] = pose_none_flag
     return blobs
 
 
-def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, objs_bert):
+def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, objs_bert):
     pose_none_flag = 1
     GT_count = len(GT)  # num_of_interval_divide
     aug_all = int(Pos_augment / GT_count)
@@ -220,10 +251,10 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
 
     Human_augmented, Object_augmented, Union_augmented, action_HO = [], [], [], []
     SGinput = []
+    obj_classes = []
     origin_poses = []
     skeboxes = np.zeros([0, 17, 5])
     bodyparts = np.zeros([0, 6, 5])
-    objclsid = []
     for i in range(GT_count):
         Human = GT[i][2]
         Object = GT[i][3]
@@ -236,8 +267,8 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
 
         Union_augmented_temp = np.zeros([0, 5])
         for j in range(length_min):
-            Union_augmented_temp = np.concatenate(
-                [Union_augmented_temp, get_union(Human_augmented_temp[j], Object_augmented_temp[j])], axis=0)
+            Union_augmented_temp = \
+                np.concatenate([Union_augmented_temp, get_union(Human_augmented_temp[j], Object_augmented_temp[j])], axis=0)
 
         action_HO__temp = Generate_action_HICO(GT[i][1])
         action_HO_temp = action_HO__temp
@@ -252,10 +283,10 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
         sgraph_in, pose_none_flag = get_sgraph_in(GT[i][5], Human, pose_none_flag)  # list with length of 51
         for j in range(length_min):
             origin_poses.append(GT[i][5])
-            objclsid.append(GT[i][-1])
+            obj_classes.append(GT[i][-1])
             Object_nodeA = [Object_augmented_temp[j][1], Object_augmented_temp[j][2], 1]  # left up corner
             Object_nodeB = [Object_augmented_temp[j][3], Object_augmented_temp[j][4], 1]  # right down corner
-            norm_sgraph_in = sgraph_in_norm(sgraph_in + Object_nodeA + Object_nodeB, Human, cfg.POSENORM)
+            norm_sgraph_in = sgraph_in_norm(sgraph_in + Object_nodeA + Object_nodeB, Human, Object, cfg.POSENORM)
             SGinput.append(norm_sgraph_in)
             skeboxes = np.concatenate([skeboxes, generate_skebox(GT[i][5], Human, shape)], axis=0)
             bodyparts = np.concatenate([bodyparts, generate_bodypart(GT[i][5], Human, shape)], axis=0)
@@ -273,14 +304,12 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
                 Union_augmented = np.concatenate([Union_augmented, get_union(Neg[2], Neg[3])], axis=0)
                 action_HO = np.concatenate((action_HO, Generate_action_HICO([Neg[1]])), axis=0)
                 origin_poses.append(Neg[7])
-                objclsid.append(Neg[5])
-
+                obj_classes.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], Neg[3], cfg.POSENORM)
                 SGinput.append(norm_sgraph_in)
                 skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
                 bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
-
         else:
             List = random.sample(range(len(Trainval_Neg[image_id])), len(Trainval_Neg[image_id]))
             for i in range(Neg_select):
@@ -292,21 +321,19 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
                     (Object_augmented, np.array([0, Neg[3][0], Neg[3][1], Neg[3][2], Neg[3][3]]).reshape(1, 5)), axis=0)
                 action_HO = np.concatenate((action_HO, Generate_action_HICO([Neg[1]])), axis=0)
                 origin_poses.append(Neg[7])
-                objclsid.append(Neg[5])
-
+                obj_classes.append(Neg[5])
                 Object_nodeA_B = [Neg[3][0], Neg[3][1], Neg[6], Neg[3][2], Neg[3][3], Neg[6]]
-                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], cfg.POSENORM)
+                norm_sgraph_in = sgraph_in_norm(Neg_Pose_Nodes + Object_nodeA_B, Neg[2], Neg[3], cfg.POSENORM)
                 SGinput.append(norm_sgraph_in)
                 skeboxes = np.concatenate([skeboxes, generate_skebox(Neg[7], Neg[2], shape)], axis=0)
                 bodyparts = np.concatenate([bodyparts, generate_bodypart(Neg[7], Neg[2], shape)], axis=0)
-
     num_pos_neg = len(Human_augmented)
 
     # Semantic Representation
     semantic = []
-    for i in objclsid:
-        clsname = clsid2cls[i]
-        semantic.append(objs_bert[clsname])
+    for i in obj_classes:
+        objname = clsid2cls[i]
+        semantic.append(objs_bert[objname])
     semantic = np.asarray(semantic).reshape(-1, 1024)
 
     # spatial
@@ -319,6 +346,7 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
 
     Human_augmented = np.asarray(Human_augmented).reshape(num_pos_neg, 5)
     Object_augmented = np.asarray(Object_augmented).reshape(num_pos_neg, 5)
+    Union_augmented = Union_augmented.reshape(num_pos_neg, 5)
     action_HO = np.asarray(action_HO).reshape(num_pos_neg, 600)
     SGinput = np.asarray(SGinput).reshape(num_pos_neg, 51 + 6)
     skeboxes = skeboxes.reshape([-1, 17, 5])
@@ -338,5 +366,5 @@ def Augmented_HICO(GT, Trainval_Neg, shape, Pos_augment, Neg_select, clsid2cls, 
         binary_label[i][1] = 1  # neg is at 1
         sparse_binary_label[i] = 0
     pose_none_flag = 1
-    return sp_masks, SGinput, semantic, Human_augmented, Object_augmented, skeboxes, bodyparts, \
+    return sp_masks, SGinput, Human_augmented, Object_augmented, Union_augmented, skeboxes, bodyparts, semantic, \
            action_HO, num_pos, sparse_binary_label, pose_none_flag

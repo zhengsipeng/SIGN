@@ -7,9 +7,25 @@ from utils.datatools import get_sgraph_in, sgraph_in_norm
 from utils.datatools import get_union, generate_skebox, generate_bodypart, Timer
 from utils.apply_prior import apply_prior
 import copy
+import os
 import cv2
 import pickle
 import numpy as np
+
+
+classes = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+           'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+           'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
+           'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite',
+           'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle',
+           'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+           'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant',
+           'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cellphone',
+           'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
+           'teddy bear', 'hair drier', 'toothbrush']
+clsid2cls = dict()
+for k in range(len(classes)):
+    clsid2cls[k+1] = classes[k]
 
 
 def get_blob(image_id):
@@ -25,22 +41,14 @@ def get_blob(image_id):
 def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
               object_thres, human_thres, prior_flag, detection):
     im_orig, im_shape = get_blob(image_id)
-
+    objs_bert = pickle.load(open(cfg.DATA_DIR + '/' + 'objs_bert768.pkl', 'rb'))
     blobs = {}
 
     for Human_out in Test_RCNN[image_id]:
         if (np.max(Human_out[5]) > human_thres) and (Human_out[1] == 'Human'):  # This is a valid human
 
-            # Predict actrion using human appearance only
-            H_box = np.array(
-                [0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
-            #if os.path.exists('Temp/vcoco/test/' + str(image_id) + '.npy'):
-            #    continue
-            #else:
-            #    print(image_id)
-            #prediction_H = net.test_image_HO(sess, im_orig, blobs)
-            #prediction_H = [prediction_H]
-            # save image information
+            # Predict action using human appearance only
+            H_box = np.array([0, Human_out[2][0], Human_out[2][1], Human_out[2][2], Human_out[2][3]]).reshape(1, 5)
 
             # all object bboxes in image
             Object_bbox = []
@@ -59,9 +67,11 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
             H_num = 0
             H_boxes, O_boxes, U_boxes = np.zeros([0, 5]), np.zeros([0, 5]), np.zeros([0, 5])
             spatial = np.zeros([0, 64, 64, 3])
-            SGinput = np.zeros([0, 51+6])
+            SGinput = np.zeros([0, 19*3+19*2])
             skeboxes = np.zeros([0, 17, 5])
             bodyparts = np.zeros([0, 6, 5])
+            semantic = np.zeros([0, 768])
+
             for Object in Test_RCNN[image_id]:
                 if (np.max(Object[5]) > object_thres) and not (np.all(Object[2] == Human_out[2])):
                     H_num += 1
@@ -69,18 +79,22 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
                     U_box = get_union(H_box[0], O_box[0])
                     posenodes, pose_none_flag = get_sgraph_in(copy.deepcopy(Human_out[6]), Human_out[2], 1)
                     sgraph_in = posenodes + [Object[2][0], Object[2][1], Object[5], Object[2][2], Object[2][3], Object[5]]
-                    norm_gnode = np.asarray(sgraph_in_norm(sgraph_in, Human_out[2], cfg.POSENORM)).reshape([1, 51+6])
+                    norm_gnode = np.asarray(sgraph_in_norm(sgraph_in, Human_out[2], Object[2], cfg.POSENORM)).reshape([1, 51+6+19*2])
                     spatial_ = Get_next_sp_with_posemap(Human_out[2], Object[2], copy.deepcopy(Human_out[6]), num_joints=17)
+                    objname = clsid2cls[Object[4]]
+                    semantic_ = np.asarray(objs_bert[objname]).reshape(-1, 768)
 
                     SGinput = np.concatenate([SGinput, norm_gnode], axis=0)
                     H_boxes = np.concatenate([H_boxes, H_box], axis=0)
                     O_boxes = np.concatenate([O_boxes, O_box], axis=0)
                     U_boxes = np.concatenate([U_boxes, U_box], axis=0)
                     spatial = np.concatenate([spatial, spatial_.reshape(1, 64, 64, 3)], axis=0)
+                    semantic = np.concatenate([semantic, semantic_], axis=0)
                     skeboxes = np.concatenate([skeboxes, generate_skebox(copy.deepcopy(Human_out[6]),
                                                                            Human_out[2], im_shape)], axis=0)
                     bodyparts = np.concatenate([bodyparts, generate_bodypart(copy.deepcopy(Human_out[6]),
                                                                             Human_out[2], im_shape)], axis=0)
+
                     Object_bbox.append(Object[2])
                     Object_class.append(Object[4])
                     Object_det.append(np.max(Object[5]))
@@ -101,6 +115,7 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
             blobs['U_boxes'] = U_boxes
             blobs['SGinput'] = SGinput
             blobs['sp'] = spatial
+            blobs['semantic'] = semantic
             blobs['skeboxes'] = skeboxes
             blobs['bodyparts'] = bodyparts
             if H_num > 0:
@@ -111,7 +126,7 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
                 #if not os.path.exists('Temp/vcoco/test/' + str(image_id) + '.npy'):
                 #    print(image_id, 'saved')
                 #    np.save('Temp/vcoco/test/' + str(image_id) + '.npy', head)
-            
+            #"""
             # Predict actrion using human and object appearance
             Score_obj = np.empty((0, 4 + 29), dtype=np.float32)
             onum = 0
@@ -211,7 +226,7 @@ def im_detect(sess, net, image_id, Test_RCNN, prior_mask, Action_dic_inv,
                                                        np.max(Human_out[5]) * Score_obj[max_idx[i]][4 + i])
 
             detection.append(dic)
-
+            #"""
 
 def test_net(sess, net, Test_RCNN, prior_mask, Action_dic_inv, output_dir, object_thres, human_thres, prior_flag):
     np.random.seed(cfg.RNG_SEED)

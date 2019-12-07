@@ -120,4 +120,4 @@ __C.ANCHOR_RATIOS = [0.5, 1, 2]
 # Number of filters for the RPN layer
 __C.RPN_CHANNELS = 512
 
-__C.POSENORM = 1
+__C.POSENORM = 2

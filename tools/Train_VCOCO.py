@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('--ag', dest='use_ag', help='use Appearance posegraph or not', action='store_true', default=False)
     parser.add_argument('--ag_att', dest='use_ag_att', help='use posegraph or not', action='store_true', default=False)
     parser.add_argument('--bi', dest='use_binary', help='use binary or not', action='store_true', default=False)
+    parser.add_argument('--Hsolo', dest='use_Hsolo', help='use Hsolo or not', action='store_true', default=False)
     parser.add_argument('--tmp', dest='tmp', help='use tmp or not', action='store_true', default=False)
     parser.add_argument('--cuda', dest='cuda', help='cuda device id', default='0', type=str)
     args = parser.parse_args()
@@ -41,10 +42,10 @@ if __name__ == '__main__':
     args = parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.cuda
     if not args.tmp:
-        Trainval_GT = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_GT_VCOCO_with_pose.pkl', "rb"))
+        Trainval_GT = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_GT_VCOCO_with_pose_objcls.pkl', "rb"))
         Trainval_N = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_Neg_VCOCO_with_pose.pkl', "rb"))
     else:
-        Trainval_GT = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_GT_VCOCO_with_pose_tmp.pkl', "rb"))
+        Trainval_GT = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_GT_VCOCO_with_pose_objcls_tmp.pkl', "rb"))
         Trainval_N = pickle.load(open(cfg.DATA_DIR + '/' + 'Trainval_Neg_VCOCO_with_pose_tmp.pkl', "rb"))
 
     np.random.seed(cfg.RNG_SEED)
@@ -60,11 +61,13 @@ if __name__ == '__main__':
     print('Use A graph: ' + str(args.use_ag))
     print('Use A graph att: ' + str(args.use_ag_att))
     print('Use binary: ' + str(args.use_binary))
+    print('Use Hsolo: ' + str(args.use_Hsolo))
+    print('Pose norm:' + str(cfg.POSENORM))
     net = SIGAN(use_skebox=args.use_skebox, use_bodypart=args.use_bodypart,
                 use_pm=args.use_pm, use_u=args.use_u,
                 use_sg=args.use_sg, use_sg_att=args.use_sg_att,
                 use_ag=args.use_ag, use_ag_att=args.use_ag_att,
-                use_binary=args.use_binary)
+                use_binary=args.use_binary, use_Hsolo=args.use_Hsolo)
     train_net(net, Trainval_GT, Trainval_N, output_dir, weight,
               args.Pos_augment, args.Neg_select, args.Restore_flag,
               max_iters=args.max_iters)

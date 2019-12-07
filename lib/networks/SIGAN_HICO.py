@@ -5,6 +5,7 @@ from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_utils
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 from tensorflow.python.framework import ops
+from tensorflow.contrib.layers import xavier_initializer
 from utils.config import cfg
 from Graph_builder import Graph
 
@@ -37,7 +38,7 @@ def resnet_arg_scope(is_training=True,
 
 class SIGAN():
     def __init__(self,
-                 num_sgnodes=2 + 17,
+                 num_sgnodes=17,
                  num_agnodes=6 + 17,
                  is_training=True,
                  use_skebox=False,
@@ -84,11 +85,14 @@ class SIGAN():
         self.skeboxes = tf.placeholder(tf.float32, shape=[None, 17, 5], name='part_boxes')
         self.bodyparts = tf.placeholder(tf.float32, shape=[None, 6, 5], name='bodypart_boxes')
         self.spatial = tf.placeholder(tf.float32, shape=[None, 64, 64, 3], name='sp')
+        self.semantic = tf.placeholder(tf.float32, shape=[None, 768], name='semantic')
         self.H_num = tf.placeholder(tf.int32)
+        self.H_num_neg = tf.placeholder(tf.int32)
 
         # ResNet 50 Network
         self.scope = 'resnet_v1_50'
         self.num_fc = 1024
+        self.num_fc2 = 1024
         self.stride = [16, ]
         if tf.__version__ == '1.1.0':
             self.blocks = [resnet_utils.Block('block1', resnet_v1.bottleneck, [(256, 64, 1)] * 2 + [(256, 64, 2)]),
@@ -111,8 +115,8 @@ class SIGAN():
         self.ori_As = tf.convert_to_tensor(self.SGraph.ori_A.astype(np.float32))
         self.As = tf.convert_to_tensor(self.SGraph.A.astype(np.float32))  # list for partition, N, V, V
         self.spatial_kernel_size = self.As.shape[0]
-        self.SGinput = tf.placeholder(tf.float32,  shape=[None, 3, 1, self.num_SGnodes, 1],
-                                      name='Gnodes')  # [N, C, T, V, M] = [N, 3, 1, 19, 1]
+        self.SGinput = tf.placeholder(tf.float32, shape=[None, self.num_SGnodes, 1, 5, 1],
+                                      name='Gnodes')  # [N, V, T, C, M] = [N, 19, 1, 3, 1]
 
         # Appearance GCN
         self.num_AGnodes = num_agnodes
@@ -120,10 +124,7 @@ class SIGAN():
         self.ori_Aa = tf.convert_to_tensor(self.AGraph.ori_A.astype(np.float32))
         self.Aa = tf.convert_to_tensor(self.AGraph.A.astype(np.float32))  # list for partition, N, V, V
 
-    #def generate_edge_importance(self):
-    #    if self.edge_importance_weighting:
-    #    else:
-    #        return [1] * self.len_st_gcn_networks
+        self.binary_type = 0
 
     def sp_to_head(self):
         with tf.variable_scope(self.scope, self.scope):
@@ -134,6 +135,7 @@ class SIGAN():
             pool2_flat_sp = slim.flatten(pool2_sp)
             fc_sp = slim.fully_connected(pool2_flat_sp, self.num_fc, scope='fc_sp')
             fc_sp = slim.dropout(fc_sp, keep_prob=self.keep_prob, scope='dropout_fc_sp')
+            fc_sp = slim.fully_connected(fc_sp, self.num_fc2, scope='fc_sp2')
         return fc_sp
 
     def build_base(self):
@@ -297,19 +299,6 @@ class SIGAN():
 
     def region_classification(self, fc_HOsp, is_training, initializer, name):
         with tf.variable_scope(name) as scope:
-            if self.use_u:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['fc_U']], axis=1)
-            if self.use_sg:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['sgcn_out']], axis=1)  # + 512
-            if self.use_ag:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['agcn_out']], axis=1)  # + 1024
-            if self.use_pm:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['pm_out']], axis=1)  # + 1024
-            if self.use_skebox:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['skbox_out']], axis=1)  # + 1024
-            if self.use_bp:
-                fc_HOsp = tf.concat([fc_HOsp, self.predictions['bp_out']], axis=1)  # + 1024
-
             fc_HOsp = slim.fully_connected(fc_HOsp, 1024, scope='fc_HOsp1')
             fc_HOsp = slim.dropout(fc_HOsp, keep_prob=self.keep_prob, scope='dropout_HOsp1')
             fc_HOsp = slim.fully_connected(fc_HOsp, 1024, scope='fc_HOsp2')
@@ -323,7 +312,14 @@ class SIGAN():
             self.predictions["cls_prob"] = cls_prob
 
             if self.use_Hsolo:
-                cls_score_H = slim.fully_connected(self.predictions['H_solo'], self.num_classes,
+                Hsolo = self.predictions['H_solo']
+                if self.use_pm:
+                    Hsolo = tf.concat([Hsolo, self.predictions['pm_out']], axis=1)
+                if self.use_sg:
+                    Hsolo = tf.concat([Hsolo, self.predictions['sgcn_out']], axis=1)
+                if self.use_skebox:
+                    Hsolo = tf.concat([Hsolo, self.predictions['skbox_out']], axis=1)
+                cls_score_H = slim.fully_connected(Hsolo, self.num_classes,
                                                    weights_initializer=initializer,
                                                    trainable=is_training,
                                                    activation_fn=None, scope='cls_score_H')
@@ -332,7 +328,7 @@ class SIGAN():
                 self.predictions["cls_score_H"] = cls_score_H
                 self.predictions["cls_prob_H"] = cls_prob_H
 
-    def gconv(self, input, A, in_channels, out_channels, kernel_size, name, alen=256, use_att=True, SA='spatial'):
+    def gconv(self, input, A, in_channels, out_channels, kernel_size, name, use_att=True, alen=512, SA='spatial'):
         if SA == 'spatial':
             num_nodes = self.num_SGnodes
             ori_A = self.ori_As
@@ -341,34 +337,42 @@ class SIGAN():
             ori_A = self.ori_Aa
         with tf.variable_scope(name) as scope:
             assert A.shape[0] == kernel_size  # kernel_size is the spatial kernel size, equals 3
-            x = slim.conv2d(input, out_channels * kernel_size,
+            x = input  # N, 1, 17, 3
+            x = slim.conv2d(x, out_channels * kernel_size,
                             kernel_size=(1, 1), stride=1, padding='VALID',
                             activation_fn=tf.nn.relu)
             x = tf.reshape(x, [-1, 1, num_nodes, self.spatial_kernel_size, out_channels])  # ntvkc
             x = tf.transpose(x, perm=[0, 3, 4, 1, 2])  # nkctv
 
             if use_att:
-                # input N, 1, k, c
-                attx = tf.reshape(input, [-1, num_nodes, in_channels])  # N, K, C
-                h = slim.fully_connected(attx, alen, activation_fn=None, scope='att_fc1')  # N, K, attC
+                # input n, 1, k, c
+                attx = tf.reshape(input, [-1, num_nodes, in_channels])  # n, k, c
+                h = slim.fully_connected(attx, alen, activation_fn=None,
+                                         weights_initializer=xavier_initializer(uniform=True),
+                                         scope='att_fc1')  # n, k, attlen
                 a_input = tf.concat([
                     tf.reshape(tf.tile(h, [1, 1, num_nodes]), [-1, num_nodes * num_nodes, alen]),
                     tf.tile(h, [1, num_nodes, 1])], axis=2)
-                a_input = tf.reshape(a_input, [-1, num_nodes, num_nodes, 2 * alen])
-                attention = tf.squeeze(slim.fully_connected(a_input, 1, activation_fn=None, scope='att_fc2'), axis=3)
-                attention = tf.nn.leaky_relu(attention)
-                attention = tf.nn.softmax(attention, axis=2)  # N, K, K
-                ori_A = tf.tile(tf.expand_dims(ori_A, 0), (self.H_num, 1, 1))
-                norm_att = tf.multiply(attention, ori_A)  # N, k, k
-                attention = tf.nn.softmax(norm_att, axis=2)  # N, k, k
+                a_input = tf.reshape(a_input, [-1, num_nodes, num_nodes, 2 * alen])  # n, k, k, 2*attlen
+                beta = tf.squeeze(slim.fully_connected(a_input, 1, activation_fn=None,
+                                                       weights_initializer=xavier_initializer(uniform=True),
+                                                       scope='att_fc2'), axis=3)
+                beta = tf.nn.leaky_relu(beta)  # n, k, k
+                zero_vec = tf.zeros_like(beta)
 
+                ori_A = tf.tile(tf.expand_dims(ori_A, 0), (self.H_num_neg, 1, 1))  # N, K, K
+
+                attention = tf.where(ori_A > 0, beta, zero_vec)
+
+                attention = tf.nn.softmax(attention, axis=2)  # n, k, k
                 attention = tf.tile(tf.expand_dims(attention, 1), (1, kernel_size, 1, 1))  # N, 1, k, k -> N, 3, k, k
                 att_A = tf.einsum('nkvw, kvw->nkvw', attention, A)
                 x = tf.einsum('nkctv, nkvw->nctw', x, att_A)
                 x = tf.nn.elu(x)
             else:
                 x = tf.einsum('nkctv, kvw->nctw', x, A)
-            x = tf.transpose(x, perm=[0, 2, 3, 1])  # ntwc
+
+            x = tf.transpose(x, perm=[0, 2, 3, 1])  # ntwc  # n, 1, 19, c
 
             if in_channels == out_channels:
                 residual_x = input
@@ -379,12 +383,14 @@ class SIGAN():
             return x
 
     def spatial_GCN(self, input, use_att=True):
+        num_sgin = 5
+        # input N, V, T, C, M = N, 17, 1, 3, 1
         with tf.variable_scope('sp_gcn') as scope:
-            x = tf.transpose(input, perm=[0, 4, 2, 3, 1])  # N, M, T, V, C
-            x = tf.reshape(x, [-1, 1, self.num_SGnodes, 3])
-            spatial_kernel_size = self.As.shape[0]
+            x = tf.transpose(input, perm=[0, 4, 2, 1, 3])  # N, M ,T, V, C = N, 1, 1, num_nodes, channel
+            x = tf.reshape(x, [-1, 1, self.num_SGnodes, 5])[:, :, :, :num_sgin]
+            spatial_kernel_size = self.As.shape[0]  # As 3, K, K
             kernel_size = spatial_kernel_size
-            x = self.gconv(x, self.As, 3, 64, kernel_size, 'block1', use_att)
+            x = self.gconv(x, self.As, num_sgin, 64, kernel_size, 'block1', use_att)
             x = self.gconv(x, self.As, 64, 64, kernel_size, 'block2', use_att)  # 64 -> 64
             x = self.gconv(x, self.As, 64, 64, kernel_size, 'block3', use_att)  # 64 -> 64
             x = self.gconv(x, self.As, 64, 64, kernel_size, 'block4', use_att)  # 64 -> 64
@@ -394,9 +400,14 @@ class SIGAN():
             x = self.gconv(x, self.As, 128, 256, kernel_size, 'block8', use_att)  # 128 -> 256
             x = self.gconv(x, self.As, 256, 256, kernel_size, 'block9', use_att)  # 256 -> 256
             x = self.gconv(x, self.As, 256, 256, kernel_size, 'block10', use_att)  # 256 -> 256
+            # prior
+            prior_score = tf.reshape(input[:, :, :, 2, :], [-1, self.num_SGnodes])  # nk
+            x = tf.einsum('nkc, nk->nkc', tf.reshape(x, [-1, self.num_SGnodes, 256]), prior_score)
             x = tf.reshape(x, [-1, self.num_SGnodes*256])
-            x = slim.fully_connected(x, 512, scope='fc_sg')  # concat 256 * 19 -> 512
-            x = slim.dropout(x, keep_prob=self.keep_prob, scope='dropout_sg')
+            x = slim.fully_connected(x, 2048, scope='fc_sg')  # concat 256 * 19 -> 512
+            x = slim.dropout(x, keep_prob=self.keep_prob, scope='dropout_sg')  # remember testing = 1
+            x = slim.fully_connected(x, 2048, scope='fc_sg2')
+            x = slim.dropout(x, keep_prob=self.keep_prob, scope='dropout_sg2')
             return x
 
     def appearance_GCN(self, input, use_att=True):
@@ -417,7 +428,8 @@ class SIGAN():
 
     def build_network(self, is_training):
         initializer = tf.random_normal_initializer(mean=0.0, stddev=0.01)
-        head = self.head  # directly extract head features of backbone
+        head = self.head
+        # head = self.image_to_head(is_training)
         sp = self.sp_to_head()
 
         pool_H = self.crop_pool_layer(head, self.H_boxes, 'Crop_H', cfg.POOLING_SIZE)
@@ -433,15 +445,54 @@ class SIGAN():
         fc1_O = slim.dropout(fc1_O, keep_prob=self.keep_prob, scope='drop1_O')
         fc2_O = slim.fully_connected(fc1_O, self.num_fc, scope='fc2_O')
         fc2_O = slim.dropout(fc2_O, keep_prob=self.keep_prob, scope='drop2_O')
+        self.predictions['H_solo'] = fc2_H
 
+        # Network Component
+        # whether use union box
         if self.use_u:
             pool_U = self.crop_pool_layer(head, self.U_boxes, 'Crop_U', cfg.POOLING_SIZE)
             fc_U = self.res5(pool_U, is_training, True)
             fc1_U = slim.fully_connected(fc_U, self.num_fc, scope='fc1_U')
             fc1_U = slim.dropout(fc1_U, keep_prob=self.keep_prob, scope='drop1_U')
-            fc2_U = slim.fully_connected(fc1_U, self.num_fc, scope='fc2_U')
+            fc2_U = slim.fully_connected(fc1_U, self.num_fc2, scope='fc2_U')
             fc2_U = slim.dropout(fc2_U, keep_prob=self.keep_prob, scope='drop2_U')
             self.predictions['fc_U'] = fc2_U
+
+        # whether use bodypart
+        if self.use_bp:
+            bodyparts = tf.reshape(self.bodyparts, [-1, 5])  # N, 6, 5 -> N*6, 5
+            pool_bp = self.crop_pool_layer(head, bodyparts, 'Crop_part', 5)
+            fc1_bp = slim.fully_connected(pool_bp, 256, scope='fc1_bp')
+            fc1_bp = slim.dropout(fc1_bp, keep_prob=self.keep_prob, scope='dropout1_bp')
+            fc2_bp = tf.reshape(fc1_bp, [-1, 6 * 256])
+            fc2_bp = slim.fully_connected(fc2_bp, 1024, scope='fc2_bp')
+            fc2_bp = slim.dropout(fc2_bp, keep_prob=self.keep_prob, scope='dropout2_bp')
+            self.predictions['bp_out'] = fc2_bp
+        # whether use skeleton box
+        if self.use_skebox:
+            # skeleton input
+            skeboxes = tf.reshape(self.skeboxes, [-1, 5])  # N*17, 5
+            pool5_skbox = self.crop_pool_layer(head, skeboxes, 'Crop_SK', 5)
+            fc_skbox = self.res5(pool5_skbox, is_training, True)  # N*17, channel
+            fc1_sk = slim.fully_connected(fc_skbox, 256, scope='fc1_sk')
+            fc1_sk = slim.dropout(fc1_sk, keep_prob=self.keep_prob, scope='dropout1_sk')
+            fc1_sk = tf.reshape(fc1_sk, [-1, 17 * 256])
+            fc2_sk = slim.fully_connected(fc1_sk, 1024, scope='fc2_sk')
+            fc2_sk = slim.dropout(fc2_sk, keep_prob=self.keep_prob, scope='dropout2_sk')
+            fc3_sk = slim.fully_connected(fc2_sk, 1024, scope='fc3_sk')
+            fc3_sk = slim.dropout(fc3_sk, keep_prob=self.keep_prob, scope='dropout3_sk')
+            self.predictions['skbox_out'] = fc3_sk
+        # whether use pose map
+        if self.use_pm:
+            conv1_pm = slim.conv2d(self.spatial[:, :, :, 2:], 32, [5, 5], padding='VALID', scope='conv1_pm')
+            pool1_pm = slim.max_pool2d(conv1_pm, [2, 2], scope='pool1_pm')
+            conv2_pm = slim.conv2d(pool1_pm, 16, [5, 5], padding='VALID', scope='conv2_pm')
+            pool2_pm = slim.max_pool2d(conv2_pm, [2, 2], scope='pool2_pm')
+            pool2_flat_pm = slim.flatten(pool2_pm)
+            pm_fc = slim.fully_connected(pool2_flat_pm, 1024, scope='pm_fc')
+            pm_fc = slim.dropout(pm_fc, keep_prob=self.keep_prob, is_training=is_training, scope='dropout_pm')
+            self.predictions['pm_out'] = pm_fc
+
         # whether use spatial GCN
         if self.use_sg:
             x = self.spatial_GCN(self.SGinput, self.use_sg_att)  # input N, C, T, V, M
@@ -465,63 +516,51 @@ class SIGAN():
             x = self.appearance_GCN(agraph_x, self.use_ag_att)
             self.predictions['agcn_out'] = x
 
-            # whether use bodypart
-            if self.use_bp:
-                fc1_bp = slim.dropout(fc1_bp, keep_prob=self.keep_prob, scope='dropout1_bp')
-                fc2_bp = tf.reshape(fc1_bp, [-1, 6 * 256])
-                fc2_bp = slim.fully_connected(fc2_bp, 1024, scope='fc2_bp')
-                fc2_bp = slim.dropout(fc2_bp, keep_prob=self.keep_prob, scope='dropout2_bp')
-                self.predictions['bp_out'] = fc2_bp
-            # whether use skeleton box
-            if self.use_skebox:
-                fc1_sk = slim.dropout(fc1_sk, keep_prob=self.keep_prob, scope='dropout1_sk')
-                fc1_sk = tf.reshape(fc1_sk, [-1, 17 * 256])
-                fc2_sk = slim.fully_connected(fc1_sk, 1024, scope='fc2_sk')
-                fc2_sk = slim.dropout(fc2_sk, keep_prob=self.keep_prob, scope='dropout2_sk')
-                fc_skbox = tf.reshape(slim.avg_pool2d(fc2_sk, [1, 17]), [-1, 2048])
-                self.predictions['skbox_out'] = fc_skbox
-        # whether use pose map
-        if self.use_pm:
-            conv1_pm = slim.conv2d(self.spatial[:, :, :, 2:], 32, [5, 5], padding='VALID', scope='conv1_pm')
-            pool1_pm = slim.max_pool2d(conv1_pm, [2, 2], scope='pool1_pm')
-            conv2_pm = slim.conv2d(pool1_pm, 16, [5, 5], padding='VALID', scope='conv2_pm')
-            pool2_pm = slim.max_pool2d(conv2_pm, [2, 2], scope='pool2_pm')
-            pool2_flat_pm = slim.flatten(pool2_pm)
-            pm_fc = slim.fully_connected(pool2_flat_pm, 1024, scope='pm_fc')
-            pm_fc = slim.dropout(pm_fc, keep_prob=self.keep_prob, is_training=is_training, scope='dropout_pm')
-            self.predictions['pm_out'] = pm_fc
-
-        if self.use_Hsolo:
-            head_phi = slim.conv2d(head, 512, [1, 1], scope='head_phi')
-            head_g = slim.conv2d(head, 512, [1, 1], scope='head_g')
-            Att_H = self.attention_pool_layer_H(head_phi, fc_H[:self.H_num, :], is_training, 'Att_H')
-            Att_H = self.attention_norm_H(Att_H, 'Norm_Att_H')
-            att_head_H = tf.multiply(head_g, Att_H)
-            pool5_SH = self.bottleneck(att_head_H, 'bottleneck', False)
-            fc7_SH = tf.reduce_mean(pool5_SH, axis=[1, 2])
-            Concat_SH = tf.concat([fc_H[:self.H_num, :], fc7_SH[:self.H_num, :]], 1)
-            fc8_SH = slim.fully_connected(Concat_SH, self.num_fc, scope='fc8_SH')
-            fc8_SH = slim.dropout(fc8_SH, keep_prob=0.5, is_training=is_training, scope='dropout8_SH')
-            fc9_SH = slim.fully_connected(fc8_SH, self.num_fc, scope='fc9_SH')
-            self.predictions['H_solo'] = slim.dropout(fc9_SH, keep_prob=0.5, is_training=is_training, scope='dropout9_SH')
-
         fc_HOsp = tf.concat([fc2_H, fc2_O, sp], 1)
+        if self.use_u:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['fc_U']], axis=1)
+        if self.use_sg:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['sgcn_out']], axis=1)  # + 512
+        if self.use_ag:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['agcn_out']], axis=1)  # + 1024
+        if self.use_pm:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['pm_out']], axis=1)  # + 1024
+        if self.use_skebox:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['skbox_out']], axis=1)  # + 1024
+        if self.use_bp:
+            fc_HOsp = tf.concat([fc_HOsp, self.predictions['bp_out']], axis=1)  # + 1024
+
         self.region_classification(fc_HOsp, is_training, initializer, 'classification')
 
         if self.use_binary:
-            # Remain iCAN components for TIN binary
-            head_phi = slim.conv2d(head, 512, [1, 1], scope='head_phi')
-            head_g = slim.conv2d(head, 512, [1, 1], scope='head_g')
-            Att_H = self.attention_pool_layer_H(head_phi, fc_H[:self.H_num, :], is_training, 'Att_H')
-            Att_H = self.attention_norm_H(Att_H, 'Norm_Att_H')
-            att_head_H = tf.multiply(head_g, Att_H)
-            Att_O = self.attention_pool_layer_O(head_phi, fc_O, is_training, 'Att_O')
-            Att_O = self.attention_norm_O(Att_O, 'Norm_Att_O')
-            att_head_O = tf.multiply(head_g, Att_O)
-            pool5_SH = self.bottleneck(att_head_H, 'bottleneck', False)
-            pool5_SO = self.bottleneck(att_head_O, 'bottleneck', True)
-            fc7_SH, fc7_SO = self.head_to_tail(fc_H, fc_O, pool5_SH, pool5_SO, is_training)
-            fc9_binary = self.binary_discriminator(fc_H, fc_O, fc7_SH, fc7_SO, sp, is_training, 'fc_binary')
+            if self.binary_type == 0:
+                # Remain iCAN components for TIN binary
+                head_phi = slim.conv2d(head, 512, [1, 1], scope='head_phi')
+                head_g = slim.conv2d(head, 512, [1, 1], scope='head_g')
+                Att_H = self.attention_pool_layer_H(head_phi, fc_H, is_training, 'Att_H')
+                Att_H = self.attention_norm_H(Att_H, 'Norm_Att_H')
+                att_head_H = tf.multiply(head_g, Att_H)
+                Att_O = self.attention_pool_layer_O(head_phi, fc_O, is_training, 'Att_O')
+                Att_O = self.attention_norm_O(Att_O, 'Norm_Att_O')
+                att_head_O = tf.multiply(head_g, Att_O)
+                pool5_SH = self.bottleneck(att_head_H, 'bottleneck', False)
+                pool5_SO = self.bottleneck(att_head_O, 'bottleneck', True)
+                fc7_SH, fc7_SO = self.head_to_tail(fc_H, fc_O, pool5_SH, pool5_SO, is_training)
+                fc9_binary = self.binary_discriminator(fc_H, fc_O, fc7_SH, fc7_SO, sp, is_training, 'fc_binary')
+            elif self.binary_type == 1:
+                fc_bi = tf.concat([fc_H, fc_O, sp], axis=1)
+                fc1_bi = slim.fully_connected(fc_bi, self.num_fc, scope='fc1_bi')
+                fc1_bi = slim.dropout(fc1_bi, keep_prob=self.keep_prob, scope='drop1_bi')
+                fc2_bi = slim.fully_connected(fc1_bi, self.num_fc, scope='fc2_bi')
+                fc9_binary = slim.dropout(fc2_bi, keep_prob=self.keep_prob, scope='drop2_bi')
+            elif self.binary_type == 2:
+                fc_bi = tf.concat([fc_H, sp, self.predictions['pm_out']], axis=1)
+                fc1_bi = slim.fully_connected(fc_bi, self.num_fc, scope='fc1_bi')
+                fc1_bi = slim.dropout(fc1_bi, keep_prob=self.keep_prob, scope='drop1_bi')
+                fc2_bi = slim.fully_connected(fc1_bi, self.num_fc, scope='fc2_bi')
+                fc9_binary = slim.dropout(fc2_bi, keep_prob=self.keep_prob, scope='drop2_bi')
+            else:
+                raise NotImplementedError
             self.binary_classification(fc9_binary, is_training, initializer, 'binary_classification')
 
     def create_architecture(self, is_training):
@@ -546,7 +585,7 @@ class SIGAN():
                 cls_score_H = self.predictions["cls_score_H"]
                 H_cross_entropy = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=label_HO[:self.H_num, :],
-                                                            logits=cls_score[:self.H_num, :]))
+                                                            logits=cls_score_H[:self.H_num]))
                 self.losses['H_cross_entropy'] = H_cross_entropy
                 loss += H_cross_entropy
 
@@ -562,28 +601,28 @@ class SIGAN():
         return loss
 
     def train_step(self, sess, blobs, lr, train_op):
-        SGinput = blobs['SGinput'].reshape(-1, 3, 1, 17 + 2, 1)
-        if self.num_SGnodes != 19:
-            SGinput = SGinput[:, :, :, :self.num_SGnodes, :]
-
+        SGinput = blobs['SGinput'].reshape(-1, 17 + 2, 1, 5, 1)
+        num_neg = SGinput.shape[0]
+        SGinput = SGinput[:, :self.num_SGnodes, :, :, :]
         feed_dict = {self.image: blobs['image'], self.head: blobs['head'],
+                     self.H_num: blobs['H_num'], self.H_num_neg: num_neg, self.lr: lr,
+                     self.spatial: blobs['sp'], self.SGinput: SGinput,
+                     self.semantic: blobs['semantic'],
                      self.H_boxes: blobs['H_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes'],
-                     self.skeboxes: blobs['partboxes'], self.bodyparts: blobs['bodyparts'],
-                     self.spatial: blobs['sp'],
-                     self.gt_class_HO: blobs['gt_class_HO'], self.gt_binary_label: blobs['binary_label'],
-                     self.H_num: blobs['H_num'],
-                     self.SGinput: SGinput, self.lr: lr}
+                     self.skeboxes: blobs['skeboxes'], self.bodyparts: blobs['bodyparts'],
+                     self.gt_class_HO: blobs['gt_class_HO'], self.gt_binary_label: blobs['binary_label']}
         loss, _ = sess.run([self.losses['total_loss'], train_op], feed_dict=feed_dict)
         return loss
 
     def test_image_HO(self, sess, image, blobs):
-        SGinput = blobs['SGinput'].reshape(-1, 3, 1, 17 + 2, 1)
-        if self.num_SGnodes != 19:
-            SGinput = SGinput[:, :, :, :self.num_SGnodes, :]
+        SGinput = blobs['SGinput'].reshape(-1, 17 + 2, 1, 5, 1)
+        SGinput = SGinput[:, :self.num_SGnodes, :, :, :]
         feed_dict = {self.image: image, self.head: blobs['head'],
-                     self.H_boxes: blobs['H_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes'],
-                     self.spatial: blobs['sp'], self.H_num: blobs['H_num'],
-                     self.skeboxes: blobs['partboxes'], self.bodyparts: blobs['bodyparts'],
-                     self.SGinput: SGinput}
+                     self.H_num: blobs['H_num'], self.H_num_neg: blobs['H_num'],
+                     self.spatial: blobs['sp'], self.semantic: blobs['semantic'],
+                     self.skeboxes: blobs['skeboxes'], self.bodyparts: blobs['bodyparts'],
+                     self.SGinput: SGinput,
+                     self.H_boxes: blobs['H_boxes'], self.O_boxes: blobs['O_boxes'], self.U_boxes: blobs['U_boxes']
+                     }
         cls_prob_HO = sess.run([self.predictions['cls_prob_HO']], feed_dict=feed_dict)
         return cls_prob_HO
